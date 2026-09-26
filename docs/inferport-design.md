@@ -1,15 +1,12 @@
-# InferPort 方案
+# InferPort 协议与接口参考
 
-日期：2026-09-26。状态：独立库首版已实现；实测范围与剩余缺口见 [验证记录](validation.md)。
+更新日期：2026-09-26。对应 SDK 0.1.0、线协议 `inferport.v1`；实测范围见 [验证概览](validation.md)。
 
-本文是从 `policy-runtime` 演进到 InferPort 的完整实现依据。名称、WebSocket + MessagePack、
-Python 3.10 兼容下限、NumPy >=1.21.3,<3 兼容范围，以及一模型对一执行端的范围已经在讨论中确认。
-下文将这些取舍落实为 API、线协议、状态规则、实现步骤和验收要求。
-当前独立的 `InferPort` 仓库提供 `inferport` 包和可运行示例，后续开发以本仓库为准。
+本文定义已实现的公开 API、数据格式、连接生命周期和回归要求，后续修改须同步维护。
+快速使用见 [README](../README.md)，下一阶段工作见 [真实推理验证计划](integration-validation.md)。
+选型对照及首版实施阶段保存在 [设计研究归档](archive/design-notes.md)。
 
-本文最初作为设计基线形成，后按用户要求在本仓库实现；其他仓库适配、发布、Git 提交与推送另行处理。
-
-## 1. 定位与完成标准
+## 1. 定位与范围
 
 InferPort 是一个轻量的 Python 推理通信库。模型算法与执行环境分别安装它，通过少量适配代码交换数据。
 模型端可以属于 LeRobot、mimix 或其他算法库；调用端可以是真机、仿真，也可以是离线评估程序。
@@ -17,12 +14,11 @@ InferPort 是一个轻量的 Python 推理通信库。模型算法与执行环�
 
 首版的使用边界：
 
-- 一个服务进程托管一个已加载的 `Backend`，同时只允许一个活动连接使用它。
+- 一个服务进程托管一个 `Backend`，同时只允许一个活动连接使用它；模型可在首次 reset 时加载。
 - 一个 `Client` 同时执行一个调用；公开接口同步，调用方掌握自己的执行循环。
 - 一次请求可以包含 batch。batch 的形状、每个元素的含义和批内状态由模型适配器定义。
 - 数据为字符串键字典、基本值、列表和数值 NumPy 数组。请求与结果均以字典为根。
 - 两端可以使用不同 Python、NumPy、模型框架和设备，只须遵守同一个线协议版本。
-- 完成首版的标准是可安装的独立包、清晰的协议、可复现的功能与故障测试、可照着接入的示例。
 
 首版范围之外：RTC 算法、动作队列与调度、机器人/环境基类、训练、自动 batch 聚合、
 多个并发会话、多模型路由、流式生成、请求取消、自动重试、服务发现、通用 `describe()`、
@@ -48,7 +44,7 @@ flowchart LR
 | 模型仓库 | 权重与设备、推理、模型状态、processor 状态、输入输出语义校验 |
 | 执行仓库 | 观测采集、字段转换、动作消费、执行频率、设备控制与本地保护 |
 
-模型适配器留在模型仓库，不放进 InferPort。执行端不必继承 `EnvAdapter` 或 `Robot`。
+模型适配器留在模型仓库。执行端直接使用 `Client`，由自身管理执行循环。
 安装和导入 InferPort 不得加载 Torch、JAX、CUDA、LeRobot、ROS、Gymnasium 或机器人 SDK。
 
 能传数组不等于模型适用于任意机器人。适配双方必须约定相机含义、RGB/BGR、HWC/CHW、
@@ -63,11 +59,10 @@ InferPort 不做隐式 resize、图像压缩、类型降精度、归一化、动
 - Python 网络库：`websockets`。使用明确的 `websockets.asyncio` 导入路径。
 - 编码：MessagePack。仅发送二进制业务消息。
 - 数组表示：固定扩展类型承载 `dtype + shape + bytes`。
-- 不保留原生 TCP/JSON 兼容通道，不同时实现 ZMQ 后端。
 
 选型依据是当前一对一调用的维护成本：采用现成消息分帧与连接协议，把自有代码集中在推理契约。
 不把未测量的性能优势、多客户端路由或未来 RTC 当作本次选型依据。
-WebSocket 仍有帧处理、客户端掩码和缓冲成本，实际开销纳入第 12 节的基准。
+WebSocket 仍有帧处理、客户端掩码和缓冲成本，实际开销纳入第 11 节的基准。
 
 ### 3.2 同步公开 API，内部异步 I/O
 
@@ -85,7 +80,7 @@ WebSocket 仍有帧处理、客户端掩码和缓冲成本，实际开销纳入�
 
 ### 3.3 Python、依赖和发布元数据
 
-目标元数据：
+[pyproject.toml](../pyproject.toml) 中的运行依赖：
 
 ```toml
 [project]
@@ -98,10 +93,10 @@ dependencies = [
 ]
 ```
 
-这是首版待完整验证的依赖范围，不是声称该范围内所有组合均已测试。
-发布前须完成最低组合、各 Python 兼容组合及最新组合测试；发现具体不兼容版本时使用明确的排除约束。
+该范围内已验证最低依赖、常见训练环境和较新组合，具体版本及平台见 [验证概览](validation.md)。
+这些结果不覆盖范围内所有组合；后续发布继续运行兼容矩阵，发现具体不兼容版本时使用明确的排除约束。
 
-- CPython 3.10–3.14 是首版正式测试目标；开发基线为 3.12。
+- Linux CI 覆盖 CPython 3.10–3.14；开发基线为 3.12。
 - 不支持 3.8/3.9，不预先设置 Python 上限；更新 Python 通过 CI 后再列入正式支持。
 - NumPy 1.21.3 是安装下限，使用 Python 3.10 验证；Python 3.11 增加 NumPy 1.23.5 兼容测试。
 - NumPy 1.26.4 在 Python 3.10–3.12 上仍是重点兼容组合。具体 NumPy 版本必须支持所用 Python：
@@ -111,7 +106,8 @@ dependencies = [
   已有项目锁定范围内且支持其 Python 的版本时，应能同时满足依赖；不为安装 InferPort 强制升级到 1.26.4。
 - 应用方锁定实际环境；仓库的开发锁文件不限制下游安装时的依赖选择。
 - InferPort 自身发布纯 Python wheel，不编译自己的 C/CUDA 扩展，不依赖 NumPy C ABI。
-- 首版不声明 PyPy、自由线程 Python 或 32 位平台支持；Linux x86_64 为运行验证基线，ARM64 做安装验证。
+- 首版不声明 PyPy、自由线程 Python 或 32 位平台支持；Linux x86_64 为运行验证基线，
+  ARM64 仅做二进制依赖解析，尚无设备安装/运行证据。
 
 Python 3.10 将于 2026-10 结束上游支持。首个稳定系列覆盖 3.10；后续若它阻碍必要依赖更新，
 提前在新功能版本中提高下限，补丁版本不突然取消支持。保留旧发行版的可安装性，
@@ -122,14 +118,14 @@ Python 3.10 将于 2026-10 结束上游支持。首个稳定系列覆盖 3.10；
 [NumPy 1.26.4 支持范围](https://numpy.org/doc/2.1/release/1.26.4-notes.html) 和
 [websockets 版本说明](https://websockets.readthedocs.io/en/stable/project/changelog.html)。
 
-仓库名为 `InferPort`，发行包名和导入名为 `inferport`。2026-09-26 查询 PyPI 的
-`inferport` 项目元数据返回 404；这不等于名称已预留或一定获准注册。首次发布前再次检查。
-开发版本从 `0.1.0` 开始；SDK 版本与线协议版本分别管理。
+仓库名为 `InferPort`，发行包名和导入名为 `inferport`。2026-09-26 已在
+[官方 PyPI](https://pypi.org/project/inferport/0.1.0/) 发布 `0.1.0`，发布与安装证据见
+[验证记录](validation.md)。SDK 版本与线协议版本分别管理。
 
 ## 4. 公开 Python 接口
 
-首版公开入口为 `Client`、`Backend`、`serve`，不增加公开的 Session、EnvAdapter、Server 或配置类。
-以下签名属于目标接口；`Payload` 表示第 6 节规定的字符串键字典。
+首版公开入口为 `Client`、`Backend`、`serve`。
+以下是公开接口签名；`Payload` 表示第 6 节规定的字符串键字典。
 
 ### 4.1 Backend
 
@@ -272,9 +268,8 @@ with Client("ws://model-host:8000") as client:
 InferPort 不自动执行完整 chunk，也不在网络线程控制硬件。value/reward/Q 后端通常无须 reset。
 `actions`、`state`、`instruction`、`value` 都是此处适配器的业务字段，不是协议保留字段。
 
-LeRobot PI05 接入时复用现有权重与 processor 加载逻辑，把 `get_action` 改为 `infer`，
-把输出包装为 `{"actions": array}`。重置必须覆盖实际有状态的 processor，不能只重置 policy。
-图像类型转换、HWC/CHW、归一化和 Torch/NumPy 转换仍由适配器拥有。
+具体模型接入须对照其原生推理入口验证 processor、状态清理和输出语义，
+步骤见 [真实推理验证计划](integration-validation.md)。
 
 ## 6. 数据表示与数组编码
 
@@ -318,6 +313,9 @@ data:  C 顺序的二进制 bytes
 保持数值、数值类型宽度和 shape，不保留原始 strides、字节序、视图关系或子类信息。
 接收方还原为本机字节序、C 连续、可写的普通 ndarray。这通常需要一次拷贝；
 首版明确接受该成本，避免只读数组接入 Torch 或原地预处理时的隐患，不声称零拷贝。
+
+服务端在串行工作线程中完成输出编码后再调用下一次 Backend 方法，客户端结果拥有独立存储。
+适配器必须保证编码期间没有外部线程修改返回缓冲区；后续推理、reset 或断连清理不改变已返回结果。
 
 解码顺序：先检查扩展结构与长度，再检查 dtype 白名单、shape，最后检查字节数并构建数组。
 必须满足 `len(data) == math.prod(shape) * itemsize`。不接受 -1 维度推断、多余字节、
@@ -386,7 +384,7 @@ MessagePack 的扩展类型避免数组标记与用户字典字段碰撞；格�
 - Client 必须验证 ID 对应关系和响应结构；不匹配即废弃连接，禁止把旧结果交给下一次调用。
 - SDK 每次等待当前调用完成后再发下一个请求；不提供 pipeline 或响应重排功能。
   服务端始终按接收顺序串行执行，不能因为缓冲区中出现后续请求就并行调用 Backend。
-- 不设置 episode_id、session_id 或 reset generation；一个活动连接和严格顺序构成首版状态边界。
+- 一个活动连接和严格顺序构成首版状态边界。
 - 不把诊断信息写入用户的结果字典，不预留任意 RPC endpoint 注册机制。
 
 ### 7.3 错误与关闭约定
@@ -515,16 +513,23 @@ ws 不提供加密，token 本身也不能加密消息；跨不可信网络使�
 使用标准 logging，默认记录连接/断连、请求 ID、操作、耗时和错误码；不默认记录图像、完整数组、
 指令正文或密钥。不加入遥测、模型清单接口或通过网络加载代码的能力。
 
-## 10. 仓库结构与旧代码处理
+## 10. 代码与文档组织
 
-目标目录：
+主要文件与职责：
 
 ```text
 pyproject.toml
 README.md
+CHANGELOG.md
 LICENSE
 docs/
-  inferport-design.md       # 本设计的唯一详细版本
+  inferport-design.md      # 协议与接口参考
+  integration-validation.md # 下一阶段真实接入步骤
+  roadmap.md              # 剩余工作的优先级
+  validation.md           # 验证概览与证据入口
+  releasing.md            # 后续版本发布流程
+  benchmark-results.json  # 首版性能测量原始数据
+  archive/                # 设计研究与逐轮验证历史
 src/inferport/
   __init__.py              # 公共导出
   backend.py               # Backend 与 Payload 类型
@@ -534,63 +539,33 @@ src/inferport/
   codec.py                 # MessagePack / ndarray 格式与限制
   errors.py                # 公共异常
   _io.py                   # 私有 I/O 循环、deadline 和关闭助手
+  py.typed                # 类型标记
 examples/
   serve_value.py
   call_value.py
   stateful_counter.py
+  thread_bound_backend.py
 tests/
   test_codec.py
   test_protocol.py
   test_lifecycle.py
   test_transport.py
   test_packaging.py
+  test_adapter_contracts.py
+  cross_environment.py
 benchmarks/
   roundtrip.py
 .github/workflows/
   ci.yml
+  publish.yml
 ```
 
-模块划分可以在实现时小幅调整，但不引入通用 transport 注册表、Session manager、插件发现或额外配置框架。
-运行依赖仅为第 3 节的三个包；测试、lint、构建依赖单独放入开发组，执行优先使用 uv。
+运行依赖仅为第 3 节的三个包。测试与 lint 工具放在开发依赖组，构建后端通过 build-system 声明；
+开发和发布命令见 README 与发布指南。模型适配器和执行循环由业务仓库维护。
 
-用户已明确没有旧 API 兼容负担。实现时直接替换包名、导入路径和 README，删除已被替代的旧模块，
-不添加 `policy_runtime` 兼容别名或维护两套线协议。实现已从 `policy-runtime` 工作区迁入独立的
-`InferPort` 本地 Git 仓库；旧目录作为迁移备份，后续维护集中在本仓库。
-Git 提交、远程仓库创建和 PyPI 发布分别按实际请求执行。
+## 11. 回归验证要求
 
-已有代码的处置：
-
-| 旧内容 | 目标 |
-|---|---|
-| PolicyAdapter | 迁为 Backend；infer / reset / close |
-| EnvAdapter + run_client | 控制循环回到调用仓库，通用库保留薄 Client |
-| JsonSocket / 长度头 / Base64 | 由 WebSocket + 新 codec 替代 |
-| start_episode / get_action / end_episode | 改为连接生命周期 + reset / infer |
-| episode_id | 移除未落实的会话语义，采用连接独占与请求 ID |
-| CLI 动态 import 工具 | 移除；模型仓库提供启动脚本 |
-
-本地 Gitee LeRobot 中存在真实 PI05 适配器，以及与旧独立库重复的 policy_runtime 核心。
-后续接入必须从 `inferport` 导入 Backend，不能仅改安装依赖而继续继承旧的独立类。
-迁移完成后，公共通信实现以 InferPort 为唯一来源；其他仓库的删改在相应接入工作中执行。
-本方案不把另一仓库的实验、任务编号或机器路径作为本库验收的隐含前置条件。
-
-## 11. 实施顺序与交付物
-
-| 阶段 | 工作 | 可检查的交付物 |
-|---|---|---|
-| A：包与数据契约 | 新包骨架、依赖、错误、codec、v1 消息校验 | 可构建 wheel；codec/protocol 正反例通过 |
-| B：通信与状态 | Client、serve、ready、独占、工作线程、超时与关闭 | 独立进程调用和生命周期故障测试通过 |
-| C：安装与示例 | 文档、无状态与有状态示例、跨版本与安装矩阵 | 干净环境可安装；无模型依赖调用成功 |
-| D：性能与首版复核 | 固定 payload 基准、限制检查、打包内容审阅 | 有可复现结果，明确仍存在的验证缺口 |
-| E：外部真实适配 | 在模型/执行仓库接入 PI05 等选定后端 | 模型、processor 和环境语义由所属仓库验证 |
-
-A–D 构成独立库首版实现。E 是独立的集成验证工作，已有适配器可作为首个候选；
-真机、权重、设备或第二个实际模型未指定时，不能用 mock 测试宣称已完成这些集成。
-不要求先接入多种真实机器人才能完成协议库，但也不以协议库测试代替闭环验证。
-
-## 12. 验证与验收
-
-### 12.1 必须通过的功能与失败测试
+### 11.1 必须通过的功能与失败测试
 
 | 范围 | 必须验证的行为 |
 |---|---|
@@ -616,7 +591,7 @@ A–D 构成独立库首版实现。E 是独立的集成验证工作，已有适
 对端停止读取测试要发送超过 socket 缓冲容量的数据，真正覆盖发送阻塞，不能只模拟慢模型。
 还要覆盖关闭帧本身无法写出、接入中途断连和库内部发起 close 的路径，验证外层期限及 abort 回收。
 
-### 12.2 兼容与打包矩阵
+### 11.2 兼容与打包矩阵
 
 - 每个正式支持的 Python 版本运行核心功能测试，依赖解析为该解释器兼容的版本。
 - Python 3.10 + NumPy 1.21.3 + msgpack 1.1.0 + websockets 16.1.1 验证最低组合。
@@ -630,9 +605,9 @@ A–D 构成独立库首版实现。E 是独立的集成验证工作，已有适
 - Linux ARM64 验证可解析到兼容 wheel，明确记录这不等于已在真实机器人设备上运行。
 - Windows/macOS 做安装和基础运行 smoke；未实际完成的平台检查不能标记为通过。
 
-### 12.3 性能记录
+### 11.3 性能记录
 
-基准保持相同 payload、MessagePack codec、请求节奏和模型替身；单独比较旧 JSON/Base64 编码。
+基准保持相同 payload、MessagePack codec、请求节奏和模型替身；单独比较 JSON/Base64 编码。
 如比较原生 TCP 与 WebSocket，原生 TCP 基线也使用二进制 codec、长连接和合理 socket 设置，
 避免把 Base64 或 Nagle 配置差异归因于 WebSocket。
 
@@ -644,72 +619,5 @@ A–D 构成独立库首版实现。E 是独立的集成验证工作，已有适
 要求结果可复现、无随调用次数持续增长的资源泄漏、明确消息上限内的大数组成本，
 发现明显异常尾延迟或内存增长时先定位并记录，不能用平均值掩盖。
 
-## 13. 已有证据与剩余缺口
-
-以下保留设计阶段的临时诊断作为选型依据；实际实现结果以 [验证记录](validation.md) 为准：
-
-- 旧 policy-runtime 的双进程数值调用成功；畸形 JSON 可使服务端退出，断连未调用 end_episode，
-  episode_id 与调用顺序也未受到验证。它证明分离思路可行，同时存在需要替换的生命周期缺口。
-- 同一张 224×224×3 uint8 图像，原始数组 150,528 字节，旧 JSON/Base64 消息 200,794 字节，
-  OpenPI MessagePack 消息 150,585 字节；减少约 25% 是编码体积收益，不能等同于网络或模型加速。
-- OpenPI 编码在 Python 3.10 / NumPy 1.26.4 与 Python 3.12 / NumPy 2.4.4 上通过 20 类数组往返，
-  做过跨环境文件解码；其解码存在接受多余字节、-1 维度、收发 dtype 规则不一致和标记字典碰撞的问题。
-- 临时 WebSocket 示例完成约 1.84 MB 数组回环、接收超时与显式重连。这些测试未覆盖本设计的
-  完整客户端实现、TLS、状态清理、新数组扩展格式或所有 Python 版本。
-- 本轮新增“不再读取数据的对端”诊断：16 MiB 发送使用 0.2 秒期限。直接依赖库的 close_timeout
-  时关闭等待未结束；采用公开连接扩展点保留 transport、额外 0.1 秒关闭预算并 abort 后，
-  Python 3.10 / websockets 16.1.1 和 Python 3.12 / websockets 17.1 都在约 0.30 秒完成退出。
-  这验证了有界网络回收的实现路径，不能替代最终 SDK 的全链路故障测试。
-- 候选依赖做过部分 Linux x86_64 / ARM64 二进制解析；这不代替目标 wheel 的安装和运行矩阵。
-- 当前没有真实模型、仿真闭环或真机性能结果，也没有原生 TCP 与 WebSocket 的公平网络性能比较。
-
-设计借鉴与适用范围：
-
-| 参考 | 采用的经验 | 留在原项目/暂缓的部分 |
-|---|---|---|
-| OpenPI | 独立轻客户端、二进制数组表示 | 不照搬无限消息大小、模型共享状态或 codec 的宽松解码 |
-| GR00T | 薄模型包装、明确 reset 与错误返回 | 不采用其模型类耦合、任意 endpoint 注册或 ZMQ 传输 |
-| LeRobot | 模型/执行分离、processor 状态需要被重置 | Robot 类、执行队列、RTC、gRPC 服务结构 |
-| RLinf | 输出数据归属、训练与执行数据分离 | Ray/Worker 调度、动态 batch 聚合、NCCL/Gloo 通信体系 |
-| APXinf-robo（RLinf 组织的独立项目） | 线程绑定资源初始化、预处理归属和数值一致性检查 | 引擎、机器人预设、OpenPI 协议兼容层 |
-
-### 13.1 RLinf 补充对照
-
-2026-09-26 查阅官方 main 分支相关源码与 latest 文档；以下是静态对照，未运行 RLinf 或 APXinf 集成。
-这些链接会随上游更新，不表示已经固定或验证某个完整上游运行环境。
-
-RLinf 的 Channel 提供 Worker 间队列、路由和 batch 聚合，配合 Ray 与 PyTorch distributed 通信。
-其 NCCL/Gloo 和 CUDA IPC 路径服务于分布式训练工作负载；另有面向 SGLang 的 HTTP 客户端。
-同一组织的独立仓库 APXinf-robo 提供 OpenPI 兼容 WebSocket 服务。
-这几种用途不改变 InferPort 首版的一模型、一活动连接范围。
-参见 [Channel 源码](https://github.com/RLinf/RLinf/blob/main/rlinf/scheduler/channel/channel.py)、
-[通信说明](https://rlinf.readthedocs.io/en/latest/rst_source/concepts/collective.html)、
-[HTTP 客户端](https://rlinf.readthedocs.io/en/latest/rst_source/guides/inference_http_client.html) 和
-[APXinf-robo 服务](https://github.com/RLinf/APXinf-robo#openpi-compatible-serving)。
-
-RLinf 的 [rollout 动作发送实现](https://github.com/RLinf/RLinf/blob/main/rlinf/workers/rollout/hf/huggingface_worker.py)
-显式处理 CPU 数据交付，源码说明其目的包括避免 CUDA IPC 共享的输出缓冲区被后续推理覆盖。
-InferPort 在后端串行工作线程中完成返回数组的编码，再执行下一次调用；接收端重建独立可写数组。
-适配器仍须保证编码期间没有外部线程修改返回缓冲区。补充测试检查数组复用、非连续视图、
-显式重置和断连清理后，之前的客户端结果保持不变。
-
-APXinf-robo 的 [bare 模型加载接口](https://github.com/RLinf/APXinf-robo/blob/main/src/apxinf_robo/engine.py)
-注明模型句柄绑定创建线程。适配时 Backend 构造函数只保存配置或工厂，在工作线程首次 reset 时加载，
-后续 reset 清理会话状态，服务结束时在同一线程释放。NumPy 示例与测试验证这一生命周期用法，
-不代替特定 CUDA 引擎的集成验证。
-
-RLinf 的 [具身数据接口](https://rlinf.readthedocs.io/en/latest/rst_source/reference/api/embodied_data.html)
-将环境执行需要的动作与训练所需的 log-probability、value、版本和轨迹数据放在不同路径中。
-InferPort 保持通用 Payload，由适配器约定字段、batch 顺序和状态归属，不引入这些训练数据类。
-首次接入真实模型时，按相同输入、模型状态和可控随机性比较原生接口与远程调用的输出，
-验证图像布局、预处理/归一化、动作后处理和 reset，数值容差由具体模型精度与推理特性决定。
-
-### 13.2 原有参考源码
-
-[OpenPI 数组编码](https://github.com/Physical-Intelligence/openpi/blob/215abfb217dbac7d5f1273282331b9b1866c0479/packages/openpi-client/src/openpi_client/msgpack_numpy.py)、
-[OpenPI 服务端](https://github.com/Physical-Intelligence/openpi/blob/215abfb217dbac7d5f1273282331b9b1866c0479/src/openpi/serving/websocket_policy_server.py)、
-[GR00T 服务接口](https://github.com/NVIDIA/Isaac-GR00T/blob/51d4c89f72fda44cbf77285c6a8114b52676b8a1/gr00t/policy/server_client.py)、
-[LeRobot 异步客户端](https://github.com/huggingface/lerobot/blob/1bc0bdfb20ad4f4f76dc8a68a0e0746d54f50de9/src/lerobot/async_inference/robot_client.py)。
-
-本文取代早期讨论中关于名称、传输待定、通用 schema、可选调度运行时和 episode 接口的建议，
-作为 InferPort 首版的新设计基线；外部仓库原有实现事实不因此改变。
+设计选型的诊断和参考项目对照保存在
+[首版研究归档](archive/design-notes.md)。已执行的结果和剩余缺口见 [验证概览](validation.md)。

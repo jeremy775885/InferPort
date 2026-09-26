@@ -11,11 +11,14 @@ One connection owns one backend; batch is simply part of your array shapes.
 ## Install and run
 
 Python **3.10+**, NumPy **>=1.21.3,<3**. Runtime dependencies are NumPy, msgpack,
-and websockets. Install a published release from PyPI with:
+and websockets. Install from PyPI inside your project's virtual environment:
 
 ```bash
-pip install inferport
+python -m pip install inferport
 ```
+
+If your configured mirror doesn't have a new release yet, use the official index:
+`python -m pip install --index-url https://pypi.org/simple inferport`.
 
 For installation from source and local development:
 
@@ -157,18 +160,28 @@ uv build
 uv run benchmarks/roundtrip.py --iterations 100
 ```
 
-See [the full protocol and design](https://github.com/jeremy775885/InferPort/blob/main/docs/inferport-design.md),
-[verification results and remaining gaps](https://github.com/jeremy775885/InferPort/blob/main/docs/validation.md), and
-[the maturity assessment and roadmap](https://github.com/jeremy775885/InferPort/blob/main/docs/roadmap.md).
-Maintainers can follow [the release guide](https://github.com/jeremy775885/InferPort/blob/main/docs/releasing.md); changes are recorded in
-[the changelog](https://github.com/jeremy775885/InferPort/blob/main/CHANGELOG.md).
 CI covers Python 3.10–3.14, minimum dependencies (NumPy 1.21.3), NumPy 1.23.5 / 1.26.4,
 and newer combinations.
 It includes Windows/macOS smoke jobs; completed runs and their scope are recorded in
 [the validation record](https://github.com/jeremy775885/InferPort/blob/main/docs/validation.md#github-actions).
 
-InferPort replaces `policy_runtime` with no compatibility alias or TCP/JSON fallback.
 This repository doesn't implement RTC, robot/environment base classes, action scheduling,
 automatic batching, multiple sessions/models, or a schema/description framework.
 Real model and robot integrations remain in their owning repositories and require
 separate validation.
+
+## Documentation
+
+Version 0.1.0 is published on PyPI. The next milestone is real model and execution-environment integration.
+
+| Document | Purpose |
+|---|---|
+| [Protocol and API reference](https://github.com/jeremy775885/InferPort/blob/main/docs/inferport-design.md) | Data format, public interfaces, lifecycle, and limits |
+| [Validation overview](https://github.com/jeremy775885/InferPort/blob/main/docs/validation.md) | Completed checks, evidence, and remaining validation gaps |
+| [Real inference validation plan](https://github.com/jeremy775885/InferPort/blob/main/docs/integration-validation.md) | Model adapters, remote inference comparison, and closed-loop validation |
+| [Roadmap](https://github.com/jeremy775885/InferPort/blob/main/docs/roadmap.md) | Remaining priorities and deferred features |
+| [Release guide](https://github.com/jeremy775885/InferPort/blob/main/docs/releasing.md) | Publishing subsequent versions |
+| [Changelog](https://github.com/jeremy775885/InferPort/blob/main/CHANGELOG.md) | Changes by released version |
+
+Design research and detailed first-release experiments are kept in
+[the archive](https://github.com/jeremy775885/InferPort/tree/main/docs/archive), linked from the relevant reference documents.

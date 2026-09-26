@@ -21,9 +21,7 @@ def test_public_import_has_no_model_framework_dependencies():
         check=True,
     )
     imported = {name.split(".")[0] for name in json.loads(result.stdout)}
-    assert not imported.intersection(
-        {"torch", "jax", "lerobot", "gymnasium", "rclpy", "policy_runtime"}
-    )
+    assert not imported.intersection({"torch", "jax", "lerobot", "gymnasium", "rclpy"})
     metadata = importlib.metadata.metadata("inferport")
     assert metadata["Version"] == inferport.__version__
     assert metadata["License-Expression"] == "MIT"

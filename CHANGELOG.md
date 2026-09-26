@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0
+## 0.1.0 — 2026-09-26
 
 - Add model-independent `Backend`, `Client`, and `serve` APIs for policy, value,
   reward, and other inference adapters.
