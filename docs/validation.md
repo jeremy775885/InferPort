@@ -30,6 +30,42 @@ Python 3.12.3 / NumPy 2.5.3 / msgpack 1.2.2 / websockets 17.1 下，
 `tests/cross_environment.py` 的两次独立进程网络往返通过；这次两端使用同一环境。
 下文保留迁移前的跨版本、跨环境与性能证据，不把这些记录视为在新目录全部重跑。
 
+## GitHub Actions
+
+2026-09-26 核对 [首次 CI 运行](https://github.com/jeremy775885/InferPort/actions/runs/36215291050)：
+提交 `fb7f0b01fd324f5d5f1989e35e9c6efb863c5ccf`，11 个任务全部成功。
+
+- 8 个 Linux 测试任务：Python 3.10–3.14 的最新依赖组合，以及 Python 3.10 最低依赖、
+  Python 3.11 / NumPy 1.23.5、Python 3.12 / NumPy 1.26.4 组合。
+- 1 个跨环境任务：构建 wheel 后，在 Python 3.10 / NumPy 1.21.3 与 Python 3.12 / NumPy 2.x 之间双向调用。
+- 2 个平台 smoke 任务：Windows 和 macOS，覆盖 codec、protocol、lifecycle、adapter contracts 与 packaging。
+
+此记录补充下面本地验证阶段尚未取得的远程 CI 证据。Windows/macOS 结果只覆盖配置中的 smoke 子集，
+不代表所有网络故障测试、真实模型或机器人部署均已验证。后续改动仍以各自提交的 CI 结果为准。
+后续工作的优先级与完成标准见 [成熟度评估与计划](roadmap.md)。
+
+## PyPI 发布准备
+
+2026-09-26 新增 [发布工作流](../.github/workflows/publish.yml) 与 [发布说明](releasing.md)，
+版本来源统一为 `src/inferport/__init__.py`；发行元数据增加项目链接并明确包含 MIT LICENSE。
+现有 GitHub CI 增加 `workflow_call` 入口，正式发布时复用同一提交的完整矩阵。
+
+本轮本地验证：
+
+| 安装方式 | CPython | NumPy | msgpack | websockets | 结果 |
+|---|---|---|---|---|---|
+| editable | 3.12.3 | 2.4.4 | 1.2.2 | 17.1 | 144 passed |
+| 构建的 wheel | 3.12.3 | 2.5.3 | 1.2.2 | 17.1 | 144 passed |
+| 构建的 wheel | 3.10.17 | 1.21.3 | 1.1.0 | 16.1.1 | 144 passed |
+
+`uv build --no-sources`、`twine check --strict`、Ruff lint/格式检查和 wheel 环境的 `uv pip check` 均通过。
+打包测试同时验证导入版本与发行元数据一致、MIT 许可表达式与 LICENSE 文件声明一致。
+两个工作流通过 actionlint 1.7.12；直接执行发布标签检查步骤，`v0.1.0` 被接受，`v0.2.0` 被拒绝。
+
+用户已反馈完成 PyPI pending publisher 配置，绑定 `publish.yml` 和 `pypi` 环境。
+本地验证不证明 GitHub OIDC 与 PyPI 绑定已经生效；本轮尚未执行正式上传或从 PyPI 安装。
+手动运行发布工作流只验证和保存产物；实际上传由 GitHub Release 的 `published` 事件触发。
+
 ## 实际运行的兼容矩阵
 
 平台为 Linux x86_64，内核 6.8.0-139-generic，glibc 2.39。
@@ -84,7 +120,7 @@ uv run --no-project --python .venv-310/bin/python -m pytest -q
 | 3.10.17 | 1.26.4 | 1.1.0 | 16.1.1 | 144 passed |
 
 使用 `uv run pytest -q` 和当时最低依赖环境的同一测试集执行；Ruff lint 与格式检查通过。
-跨平台 CI smoke 已纳入新增文件，远程 CI 尚未执行。
+跨平台 CI smoke 已纳入新增文件；后续远程运行结果见上方 GitHub Actions 记录。
 本次不新增真实模型验证结论：原生模型与远程推理的数值对照留到首次实际适配时完成。
 
 ### 放宽 NumPy 下限后的验证
@@ -120,7 +156,7 @@ Python 3.10.17 / NumPy 1.21.3 与 Python 3.12.3 / NumPy 2.5.3 的 wheel 环境�
 
 `uv lock --check`、Ruff lint/格式检查、`git diff --check` 和 sdist/wheel 构建通过。
 CI 最低组合和跨环境互通使用 NumPy 1.21.3，增加 Python 3.11 / NumPy 1.23.5 组合，
-保留 Python 3.12 / NumPy 1.26.4；远程 CI 尚未执行。
+保留 Python 3.12 / NumPy 1.26.4；后续远程运行结果见上方 GitHub Actions 记录。
 
 ## 双进程、安装与打包
 
@@ -152,7 +188,7 @@ wheel 约 17 KB，只有 `inferport` 模块、类型标记、MIT 许可证和发
 
 Linux ARM64 使用 `uv pip compile --python-platform aarch64-unknown-linux-gnu --only-binary :all:`
 对 Python 3.10 和 3.12 完成二进制依赖解析；这不是 ARM64 设备安装/运行测试。
-`ruff check` 与 `ruff format --check` 已通过。CI 文件已写入，未推送触发远程 CI。
+`ruff check` 与 `ruff format --check` 已通过；后续远程运行结果见上方 GitHub Actions 记录。
 
 ## 实测性能
 
@@ -184,7 +220,7 @@ JSON 记录同时包含编码/解码中位耗时、吞吐、两端 CPU 时间和
 
 ## 尚未声称完成的验证
 
-- Windows/macOS 的 CI smoke 已配置，本机未实际执行；ARM64 只有二进制解析。
+- Windows/macOS 已通过 CI smoke，尚未验证完整故障测试与真实部署；ARM64 只有二进制解析。
 - 未运行真实 PI05/mimix、processor、仿真或真机闭环；未验证实际局域网/WAN 时延与长期重连行为。
 - 未做长期内存浸泡、大规模异常输入模糊测试，未进行独立安全审计。
 - 未做同 codec、同 socket 设置下的原生 TCP 公平基准。

@@ -1,0 +1,72 @@
+name: Publish to PyPI
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pypi-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --locked --python 3.12 --group dev
+      - name: Check release tag matches package version
+        if: github.event_name == 'release'
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          uv run --no-sync python - <<'PY'
+          import os
+          import inferport
+
+          expected = f"v{inferport.__version__}"
+          if os.environ["RELEASE_TAG"] != expected:
+              raise SystemExit(f"Release tag must be {expected}")
+          PY
+      - name: Build distributions and validate metadata
+        run: |
+          uv build --no-sources
+          uvx twine check --strict dist/*
+      - name: Test the built wheel in a fresh environment
+        run: |
+          uv venv --python 3.12 .venv-dist
+          uv pip install --python .venv-dist/bin/python dist/*.whl 'pytest>=8,<10'
+          uv pip check --python .venv-dist/bin/python
+          uv run --no-project --python .venv-dist/bin/python -m pytest -q
+      - uses: actions/upload-artifact@v5
+        with:
+          name: python-package-distributions
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    if: github.event_name == 'release' && github.repository == 'jeremy775885/InferPort'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/inferport
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          name: python-package-distributions
+          path: dist/
+      - name: Publish using the PyPI trusted publisher
+        uses: pypa/gh-action-pypi-publish@release/v1

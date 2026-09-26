@@ -11,7 +11,13 @@ One connection owns one backend; batch is simply part of your array shapes.
 ## Install and run
 
 Python **3.10+**, NumPy **>=1.21.3,<3**. Runtime dependencies are NumPy, msgpack,
-and websockets. The package is currently developed locally; no PyPI publication is implied.
+and websockets. Install a published release from PyPI with:
+
+```bash
+pip install inferport
+```
+
+For installation from source and local development:
 
 ```bash
 # From this repository; uv is a development convenience, not a runtime requirement.
@@ -66,11 +72,11 @@ normalization in your adapters. InferPort does not resize images or control hard
 
 Only `Backend.infer(inputs) -> dict` is required. Stateful backends implement
 `reset(context) -> None` to clear **all** model/processor/cache state and replace the
-context. An empty context must always work. See [the counter example](examples/stateful_counter.py).
+context. An empty context must always work. See [the counter example](https://github.com/jeremy775885/InferPort/blob/main/examples/stateful_counter.py).
 `close() -> None` releases backend resources at service shutdown.
 
 For engines that must be created and used on the same thread, see
-[the thread-bound model example](examples/thread_bound_backend.py). It initializes the
+[the thread-bound model example](https://github.com/jeremy775885/InferPort/blob/main/examples/thread_bound_backend.py). It initializes the
 model on the backend worker before READY; later resets retain the loaded model.
 Allow sufficient `open_timeout` for first-time model loading.
 
@@ -151,11 +157,15 @@ uv build
 uv run benchmarks/roundtrip.py --iterations 100
 ```
 
-See [the full protocol and design](docs/inferport-design.md) and
-[verification results and remaining gaps](docs/validation.md).
+See [the full protocol and design](https://github.com/jeremy775885/InferPort/blob/main/docs/inferport-design.md),
+[verification results and remaining gaps](https://github.com/jeremy775885/InferPort/blob/main/docs/validation.md), and
+[the maturity assessment and roadmap](https://github.com/jeremy775885/InferPort/blob/main/docs/roadmap.md).
+Maintainers can follow [the release guide](https://github.com/jeremy775885/InferPort/blob/main/docs/releasing.md); changes are recorded in
+[the changelog](https://github.com/jeremy775885/InferPort/blob/main/CHANGELOG.md).
 CI covers Python 3.10–3.14, minimum dependencies (NumPy 1.21.3), NumPy 1.23.5 / 1.26.4,
 and newer combinations.
-It includes Windows/macOS smoke jobs; configured CI jobs aren't evidence of a successful run.
+It includes Windows/macOS smoke jobs; completed runs and their scope are recorded in
+[the validation record](https://github.com/jeremy775885/InferPort/blob/main/docs/validation.md#github-actions).
 
 InferPort replaces `policy_runtime` with no compatibility alias or TCP/JSON fallback.
 This repository doesn't implement RTC, robot/environment base classes, action scheduling,

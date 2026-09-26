@@ -1,18 +1,28 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.26"]
 build-backend = "hatchling.build"
 
 [project]
 name = "inferport"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Lightweight inference exchange between model backends and execution environments."
 readme = "README.md"
 license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = ["numpy>=1.21.3,<3", "msgpack>=1.1,<2", "websockets>=16.1.1,<18"]
 
+[project.urls]
+Homepage = "https://github.com/jeremy775885/InferPort"
+Documentation = "https://github.com/jeremy775885/InferPort/blob/main/README.md"
+Issues = "https://github.com/jeremy775885/InferPort/issues"
+Changelog = "https://github.com/jeremy775885/InferPort/blob/main/CHANGELOG.md"
+
 [dependency-groups]
 dev = ["pytest>=8,<10", "ruff>=0.11"]
+
+[tool.hatch.version]
+path = "src/inferport/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/inferport"]

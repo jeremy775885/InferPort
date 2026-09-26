@@ -3,6 +3,8 @@ import json
 import subprocess
 import sys
 
+import inferport
+
 
 def test_public_import_has_no_model_framework_dependencies():
     result = subprocess.run(
@@ -23,6 +25,9 @@ def test_public_import_has_no_model_framework_dependencies():
         {"torch", "jax", "lerobot", "gymnasium", "rclpy", "policy_runtime"}
     )
     metadata = importlib.metadata.metadata("inferport")
+    assert metadata["Version"] == inferport.__version__
+    assert metadata["License-Expression"] == "MIT"
+    assert metadata.get_all("License-File") == ["LICENSE"]
     assert metadata["Requires-Python"] == ">=3.10"
     requirements = metadata.get_all("Requires-Dist")
     assert len(requirements) == 3
