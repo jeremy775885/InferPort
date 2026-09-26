@@ -1,0 +1,65 @@
+name: InferPort
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.10', '3.11', '3.12', '3.13', '3.14']
+        dependencies: [latest]
+        include:
+          - python: '3.10'
+            dependencies: minimum
+          - python: '3.11'
+            dependencies: numpy123
+          - python: '3.12'
+            dependencies: numpy126
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --python '${{ matrix.python }}' --group dev
+      - if: matrix.dependencies == 'minimum'
+        run: uv pip install numpy==1.21.3 msgpack==1.1.0 websockets==16.1.1
+      - if: matrix.dependencies == 'numpy123'
+        run: uv pip install numpy==1.23.5
+      - if: matrix.dependencies == 'numpy126'
+        run: uv pip install numpy==1.26.4
+      - if: matrix.dependencies == 'latest'
+        run: uv pip install --upgrade 'numpy>=1.21.3,<3' 'msgpack>=1.1,<2' 'websockets>=16.1.1,<18'
+      - run: uv pip check
+      - run: uv run --no-sync pytest -q
+      - run: uv run --no-sync ruff check .
+      - run: uv run --no-sync ruff format --check .
+      - run: uv build
+
+  cross-environment:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: |
+          uv build
+          uv venv --python 3.10 .venv-310
+          uv venv --python 3.12 .venv-312
+          uv pip install --python .venv-310/bin/python dist/*.whl numpy==1.21.3 msgpack==1.1.0 websockets==16.1.1
+          uv pip install --python .venv-312/bin/python dist/*.whl 'numpy>=2,<3'
+          uv run --no-project --python .venv-312/bin/python tests/cross_environment.py --python-a .venv-310/bin/python --python-b .venv-312/bin/python
+
+  platform-smoke:
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --python 3.12 --group dev
+      - run: uv run pytest -q tests/test_codec.py tests/test_protocol.py tests/test_lifecycle.py tests/test_adapter_contracts.py tests/test_packaging.py
