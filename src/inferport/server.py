@@ -17,6 +17,7 @@ from . import codec, protocol
 from ._io import CLOSE_TIMEOUT, ServerSocket, positive_timeout, validate_token
 from .backend import Backend
 from .errors import Error, InvalidInput, ProtocolError
+from .specs import InferenceSpec, SpecError
 
 logger = logging.getLogger("inferport.server")
 
@@ -28,6 +29,7 @@ class _Service:
         self.owner = None
         self.stopping = asyncio.Event()
         self.failure = None
+        self.spec: InferenceSpec  # Initialized on the backend worker before READY.
 
     async def work(self, function, *args):
         future = asyncio.get_running_loop().run_in_executor(self.executor, function, *args)
@@ -55,7 +57,7 @@ class _Service:
             for part in header.split(",")
         ]
         if protocol.SUBPROTOCOL not in offered:
-            response = ws.respond(HTTPStatus.BAD_REQUEST, "inferport.v1 is required\n")
+            response = ws.respond(HTTPStatus.BAD_REQUEST, "inferport.v2 is required\n")
             response.headers["InferPort-Error"] = "protocol_error"
             return response
         return None
@@ -78,11 +80,30 @@ class _Service:
         self.failure = Error(message)
         self.stopping.set()
 
+    def snapshot_spec(self):
+        declared = self.backend.describe()
+        if not isinstance(declared, InferenceSpec):
+            raise TypeError("Backend.describe must return InferenceSpec")
+        self.spec = InferenceSpec.from_dict(declared.to_dict())
+
     def execute(self, op, inputs, request_id):
         try:
-            if op == "infer":
+            if op == "describe":
+                if inputs:
+                    raise InvalidInput("describe requires an empty dictionary")
+                result = {"spec": self.spec.to_dict()}
+            elif op == "infer":
+                try:
+                    self.spec.inputs.validate(inputs, "inputs")
+                except SpecError as exc:
+                    raise InvalidInput(str(exc)) from exc
                 result = self.backend.infer(inputs)
             else:
+                if inputs:
+                    try:
+                        self.spec.context.validate(inputs, "context")
+                    except SpecError as exc:
+                        raise InvalidInput(str(exc)) from exc
                 result = self.backend.reset(inputs)
                 if result is not None:
                     return None, "invalid_output"
@@ -108,6 +129,8 @@ class _Service:
         try:
             if not isinstance(result, dict):
                 raise TypeError("backend output must be a dictionary")
+            if op == "infer":
+                self.spec.outputs.validate(result, "outputs")
             return codec.encode(protocol.success(request_id, result), self.limit), None
         except (TypeError, ValueError, OverflowError, RecursionError):
             logger.exception("invalid_output id=%s op=%s", request_id, op)
@@ -134,6 +157,7 @@ class _Service:
                 if result is not None:
                     raise TypeError("Backend.reset must return None")
                 initialized = True
+                await self.work(self.snapshot_spec)
             except Exception:
                 self.failed("Backend initialization failed; stopping service")
                 await self.send(
@@ -163,7 +187,7 @@ class _Service:
                 previous = request_id
                 if ws.state != State.OPEN or self.stopping.is_set():
                     break
-                if op not in ("infer", "reset"):
+                if op not in ("infer", "reset", "describe"):
                     await self.send(
                         ws,
                         protocol.failure(request_id, "unsupported_operation", "Unknown operation"),

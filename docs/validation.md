@@ -1,10 +1,54 @@
 # InferPort 验证概览
 
-更新日期：2026-09-26。发布基线：`v0.1.0` / `3cc9077779fa072f0a77a32c86cc842b19d5b6b8`。
+更新日期：2026-10-02。历史发布基线：`v0.1.0` / `3cc9077779fa072f0a77a32c86cc842b19d5b6b8`。
 本文汇总已取得的证据及适用范围；逐轮环境、命令和实验细节保存在
 [0.1.0 验证归档](archive/v0.1.0-validation.md)。后续源码改动应以对应提交的检查结果为准。
 
-## 当前状态
+## 0.2.0 本地候选 — 2026-10-02
+
+本地源码已实现 inferport.v2、必需的 describe、通用规格校验和 joint-targets.v1 profile，尚未发布。
+所有后端必须声明契约；不保留旧后端的无规格分支。
+Client 在连接期限内取得契约并缓存，收到结果后自动校验；业务字段与扩展由接入方声明。
+本轮验证与下文 0.1.0 CI/发布证据分开：
+
+- 源码完整测试 **202 passed**；ruff check/format 通过。
+- 实际 wheel 在仓库外独立环境完整测试 **202 passed**：Python 3.12.3、NumPy 2.5.3、
+  msgpack 1.2.3、websockets 17.1。独立进程导入/打包检查不依赖 Torch 或机器人 SDK。
+- 两个已有消费环境以实际 wheel 双向调用：Python 3.10.20 / NumPy 1.26.4 /
+  websockets 16.1.1 与 Python 3.12.3 / NumPy 2.2.6 / websockets 17.1，msgpack 均为 1.2.3。
+  显式声明规格的 echo 与机器人策略各双向通过，共四组；echo 包含后端返回 NumPy
+  整数/浮点/bool 标量，另有固定/有界动作 horizon 和数值检查。
+- v1 握手拒绝、未知/非法规格、语义/通道顺序不匹配、无状态变更的输入/context 拒绝、
+  非法输出断连、描述快照与线程归属均有测试。缺失 describe 无法实例化，None/非法声明在
+  READY 前失败，远端空声明关闭客户端连接。短 chunk 和可选诊断由消费方测试覆盖。
+- 独立 wire peer 绕过服务端输出校验，验证客户端拒绝错误形状、dtype、NaN、缺失/多余字段并关闭连接。
+  契约读取超时、describe 缓存不产生 RPC、reset 保留缓存和应用自定义字段均有回归覆盖。
+- 修复后端 NumPy 标量在编码前被错误拒绝的问题。新增 28 个回归用例覆盖所有支持的
+  bool/整数/浮点宽度、重复 RPC 与原始输出保留、bool/数字类型分离、NaN/Inf、精确整数
+  上下界、零维数组及不支持的 NumPy 标量。非法输入仍在 backend 调用前被拒绝；
+  非法输出仍触发致命错误。首个回归在修复前复现 invalid_output，修复后通过。
+- 上一轮已验证数值/有状态示例及基准载荷；本轮未运行新性能实验。
+- LeRobot PI05 服务公共观测到原模型特征的 CPU 边界测试及转换回归共 **50 passed**，
+  非法输入/context 改为经真实 SDK 拒绝且不推进模型状态；RoboTwin CPU/真实通信/原生录制/
+  进程清理测试 **65 passed**。仅涉及消费方自身仓库的实现。
+- wheel/sdist 构建及 `twine check --strict` 通过。锁文件保持原依赖与源地址；新版本号由源码提供。
+
+新版 CI 全矩阵、Windows/macOS、最低 NumPy、新版 GPU 闭环、跨机器网络与真实硬件均未执行。
+本轮没有发布、推送或服务进程接管。规格兼容不证明 checkpoint 相同或策略成功率。
+
+复现库侧验证：
+
+```bash
+uv run --no-sync pytest -q
+uv run --no-sync ruff check .
+uv run --no-sync ruff format --check .
+uv build --no-sources --out-dir /tmp/inferport-dist
+uvx twine check --strict /tmp/inferport-dist/*
+# 跨环境：替换为两个已安装同一候选 wheel 的 Python
+uv run --no-sync python tests/cross_environment.py --python-a /path/a/python --python-b /path/b/python
+```
+
+## 0.1.0 发布基线（历史）
 
 | 项目 | 已验证范围 |
 |---|---|
@@ -80,7 +124,6 @@ Trusted Publishing 的 OIDC 绑定已由实际上传验证。
 - 真实模型与 processor 的数值一致性、跨机器推理、仿真或真机闭环。
 - 实际网络下的长期运行、资源趋势与异常恢复。
 - Windows/macOS 完整故障测试和实际部署；ARM64 设备安装与运行。
-- 不同 InferPort SDK 版本的双向互通；现有跨 Python/NumPy 测试均使用同一 SDK 版本。
 - 大规模异常输入模糊测试、独立安全审计，以及相同 codec/socket 设置下的原生 TCP 对照基准均未开展。
 
 永久挂起的后端仍需要外部进程管理，线程模型不能安全强杀模型计算。

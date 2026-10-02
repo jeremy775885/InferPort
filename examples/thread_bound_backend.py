@@ -12,7 +12,7 @@ from collections.abc import Callable
 
 import numpy as np
 
-from inferport import Backend, InvalidInput, Payload, serve
+from inferport import Backend, Dimension, InferenceSpec, ObjectSpec, Payload, TensorSpec, serve
 
 
 class ThreadBoundModel:
@@ -42,6 +42,12 @@ class ThreadBoundModel:
 
 
 class ThreadBoundBackend(Backend):
+    def describe(self) -> InferenceSpec:
+        return InferenceSpec(
+            ObjectSpec({"state": TensorSpec("float32", (Dimension(), Dimension()))}),
+            ObjectSpec({"value": TensorSpec("float32", (Dimension(),))}),
+        )
+
     def __init__(self, model_factory: Callable[[], ThreadBoundModel] = ThreadBoundModel):
         # Store configuration/factories here; don't construct thread-bound handles.
         self._model_factory = model_factory
@@ -55,9 +61,7 @@ class ThreadBoundBackend(Backend):
         self._model.reset()
 
     def infer(self, inputs: Payload) -> Payload:
-        state = inputs.get("state")
-        if not isinstance(state, np.ndarray) or state.ndim != 2 or state.dtype.kind != "f":
-            raise InvalidInput("state must be a floating point array with shape [B, D]")
+        state = inputs["state"]
         if self._model is None:
             raise RuntimeError("Backend must be initialized by serve before inference")
         return {"value": self._model.predict(state)}

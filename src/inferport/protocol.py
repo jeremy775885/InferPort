@@ -1,8 +1,8 @@
-"""Strict InferPort v1 envelopes, independent of transport and model semantics."""
+"""Strict InferPort v2 envelopes, independent of transport and model semantics."""
 
 from .errors import ProtocolError, RemoteError
 
-SUBPROTOCOL = "inferport.v1"
+SUBPROTOCOL = "inferport.v2"
 MAX_ID = 2**63 - 1
 ERROR_CODES = frozenset(
     (

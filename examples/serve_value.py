@@ -4,14 +4,18 @@ import argparse
 
 import numpy as np
 
-from inferport import Backend, InvalidInput, serve
+from inferport import Backend, Dimension, InferenceSpec, ObjectSpec, TensorSpec, serve
 
 
 class ValueBackend(Backend):
+    def describe(self):
+        return InferenceSpec(
+            ObjectSpec({"state": TensorSpec("float32", (Dimension(), Dimension()))}),
+            ObjectSpec({"value": TensorSpec("float32", (Dimension(),))}),
+        )
+
     def infer(self, inputs):
-        state = inputs.get("state")
-        if not isinstance(state, np.ndarray) or state.ndim != 2 or state.dtype.kind != "f":
-            raise InvalidInput("state must be a floating point array with shape [B, D]")
+        state = inputs["state"]
         return {"value": np.sum(state * state, axis=-1)}
 
 

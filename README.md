@@ -42,14 +42,18 @@ Model repository:
 
 ```python
 import numpy as np
-from inferport import Backend, InvalidInput, serve
+from inferport import Backend, Dimension, InferenceSpec, ObjectSpec, TensorSpec, serve
 
 
 class ValueBackend(Backend):
+    def describe(self):
+        return InferenceSpec(
+            ObjectSpec({"state": TensorSpec("float32", (Dimension(), Dimension()))}),
+            ObjectSpec({"value": TensorSpec("float32", (Dimension(),))}),
+        )
+
     def infer(self, inputs):
-        state = inputs.get("state")
-        if not isinstance(state, np.ndarray) or state.ndim != 2:
-            raise InvalidInput("expected state with shape [B, D]")
+        state = inputs["state"]
         return {"value": np.sum(state * state, axis=-1)}
 
 
@@ -68,12 +72,70 @@ with Client("ws://127.0.0.1:8000") as client:
 ```
 
 For a robot or simulator, call `infer()` inside your own loop and consume the returned
-actions there. Define image layout, joint order, units, action chunk handling, and
-normalization in your adapters. InferPort does not resize images or control hardware.
+actions there. Declare image layout, joint order, units and chunk shapes through an
+`InferenceSpec`; both adapters implement that contract. InferPort validates data but
+does not resize images, normalize model features or control hardware.
+
+## Input and output contracts (0.2.0)
+
+Every backend implements `Backend.describe() -> InferenceSpec`. The
+server snapshots it once per connection, after the initial `reset({})`, on the same
+backend worker. `Client.connect()` fetches and validates the snapshot within
+`open_timeout`; `client.describe()` reads its immutable local cache without I/O.
+Missing or invalid contracts prevent initialization;
+there is no untyped backend mode.
+
+```python
+from inferport import Dimension, InferenceSpec, ObjectSpec, TensorSpec
+
+spec = InferenceSpec(
+    inputs=ObjectSpec({"state": TensorSpec("float32", (Dimension(1, 128), 7))}),
+    outputs=ObjectSpec({"value": TensorSpec("float32", (Dimension(1, 128),))}),
+)
+```
+
+`ScalarSpec` describes strings, integers, numbers and booleans; `ObjectSpec` describes
+required/optional fields. Scalar validation accepts the codec's supported NumPy
+bool/integer/float scalars without changing the payload; received scalars are Python
+values. Booleans remain distinct from numbers, and finite/range checks still apply.
+`TensorSpec` describes dtype, fixed/bounded dimensions,
+axes, semantics and ordered `Channel(name, semantic, unit)` values. Contracts serialize
+through `to_dict()` / `InferenceSpec.from_dict()`; no Python objects cross the wire.
+Dimensions are independent bounds, not symbolic relations across input/output fields.
+Applications choose field names and compose these specs; the core has no policy-specific
+payload keys. Local dataclasses/custom types can map to dictionaries and arrays at the
+application boundary; InferPort doesn't transmit or import their Python classes.
+
+The server rejects invalid input/context **before** calling
+the backend, and rejects invalid output before transmission. The client also validates
+received outputs before `infer()` returns; violations close the connection and raise
+`ProtocolError`. Applications needn't repeat those format checks. Backends still check
+business rules before changing state, such as agreement with the current instruction.
+Direct Python calls to Backend bypass serve and must meet its declared contract.
+Empty reset always remains valid. `check_compatibility(service_spec, execution_spec)` checks both data directions,
+including channel ordering and units; applications call it before executing actions.
+The specification is stable for a connection. It does not identify loaded weights.
+
+`inferport.robotics.joint_target_spec()` provides the versioned
+`robotics.joint-targets.v1` profile: `images.<camera-role>` (uint8 RGB HWC), `state`
+(float32 ordered channels), `instruction`, and float32 `action[steps, channels]`.
+It distinguishes measured positions from drive targets; actions are sequential absolute
+joint targets with executor-defined duration. Revolute joints use rad, prismatic joints
+use m, and grippers use fraction (0 closed, 1 open). Nonempty reset context supplies
+`instruction`. Diagnostics, task metadata and model seed options belong to applications;
+extend the returned dataclass with `dataclasses.replace` and additional `ObjectSpec`
+fields on each endpoint as needed. No extension registry is required.
+Each endpoint supplies its own camera sizes, channel names and output horizon; no model
+or robot shape is built into InferPort. See the [contract reference](docs/inferport-design.md#input-output-contracts-v2).
+
+This release uses `inferport.v2`; both endpoints must upgrade together. v1 peers are
+rejected during the handshake. The new `describe` operation is separate from the
+unchanged empty READY/reset acknowledgments; there is no silent protocol fallback.
 
 ## State and errors
 
-Only `Backend.infer(inputs) -> dict` is required. Stateful backends implement
+Both `Backend.describe() -> InferenceSpec` and `Backend.infer(inputs) -> dict` are
+required. Stateful backends implement
 `reset(context) -> None` to clear **all** model/processor/cache state and replace the
 context. An empty context must always work. See [the counter example](https://github.com/jeremy775885/InferPort/blob/main/examples/stateful_counter.py).
 `close() -> None` releases backend resources at service shutdown.
@@ -100,9 +162,9 @@ closing or a fatal failure; there is no reconnect, retry, or automatic request r
   Its message is public validation guidance (bounded to 512 characters).
 - Unexpected backend exceptions and unsupported outputs produce fatal `RemoteError`.
   These unexpected errors use generic client messages; server tracebacks are logged locally.
-- `ProtocolError` rejects malformed messages or mismatched responses.
+- `ProtocolError` rejects malformed messages, mismatched responses and results violating the contract.
 - `TransportError` covers connection failures; `RequestTimeout` is its subclass and
-  provides `.stage` (`open`, `ready`, `send`, or `response`).
+  provides `.stage` (`open`, `ready`, `describe`, `send`, or `response`).
 - All library exceptions inherit `Error`. `RemoteError` exposes `code`, `message`,
   `request_id`, and `fatal`.
 
@@ -110,7 +172,7 @@ closing or a fatal failure; there is no reconnect, retry, or automatic request r
 
 `Client(uri, timeout=30, open_timeout=10, max_message_bytes=64*1024*1024)`:
 
-- `open_timeout` covers connection, handshake, and READY together.
+- `open_timeout` covers connection, handshake, READY and contract retrieval together.
 - `infer(data, timeout=...)` / `reset(context, timeout=...)` cover send and receive,
   including model execution. Local encoding and decoding are outside this deadline.
 - Timeout makes the Client unusable. Network cleanup has a separate five-second budget.
@@ -119,14 +181,17 @@ closing or a fatal failure; there is no reconnect, retry, or automatic request r
 - A permanently stuck backend requires external process termination. InferPort cannot
   safely kill GPU/Python worker operations or promise hard realtime behavior.
 
-Payloads are string-keyed dictionaries containing nested dictionaries/lists, basic
+The codec supports string-keyed dictionaries containing nested dictionaries/lists, basic
 scalars, bytes, and real numeric/bool NumPy arrays. Tuples become lists; NumPy scalars
 become Python scalars. Arrays preserve values, shape, and type width and arrive as
 writable, C-contiguous, native-endian arrays. Object, structured, complex, text,
 datetime, and custom array dtypes are rejected. Convert Torch/JAX tensors explicitly.
+Business payloads must also fit the declared contracts: current specs describe
+scalars, arrays and objects, with no null/bytes/list field specs.
 
 The default **64 MiB complete message** limit applies on both sides, including the
-envelope. Configure the same limit on Client and serve (minimum 128 bytes). Arrays
+envelope and contract response. Configure the same limit on Client and serve
+(minimum setting 128 bytes; the chosen contract may require more). Arrays
 have at most 32 dimensions; messages at most 32 nesting levels and 100,000 nodes.
 This is not a total process memory limit: serialization, buffers, and writable arrays
 require additional memory. No automatic chunking or compression is performed.
@@ -145,7 +210,7 @@ by default. Use a client context for a private CA. Tokens must be nonempty print
 ASCII without whitespace; keep them out of URLs. Use TLS or a trusted encrypted tunnel
 across untrusted networks; a token does not encrypt `ws://` traffic.
 
-The only endpoint is `/`, with required subprotocol `inferport.v1`. Browser Origin
+The only endpoint is `/`, with required subprotocol `inferport.v2`. Browser Origin
 requests are rejected. Compression and system proxy discovery are disabled. Heartbeats
 check connection liveness, not model progress. Standard Python logging provides request
 IDs, operations, durations, and errors without automatically logging payloads.
@@ -166,13 +231,15 @@ It includes Windows/macOS smoke jobs; completed runs and their scope are recorde
 [the validation record](https://github.com/jeremy775885/InferPort/blob/main/docs/validation.md#github-actions).
 
 This repository doesn't implement RTC, robot/environment base classes, action scheduling,
-automatic batching, multiple sessions/models, or a schema/description framework.
+automatic batching or multiple sessions/models. Contracts describe and validate data;
+model and robot conversions remain in the consuming repositories.
 Real model and robot integrations remain in their owning repositories and require
 separate validation.
 
 ## Documentation
 
-Version 0.1.0 is published on PyPI. The next milestone is real model and execution-environment integration.
+Version 0.2.0 is an unpublished candidate in this checkout. Build/install locally until
+it is released; 0.1.0 remains the published historical baseline.
 
 | Document | Purpose |
 |---|---|

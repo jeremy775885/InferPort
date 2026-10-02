@@ -19,11 +19,31 @@ import msgpack
 import numpy as np
 import websockets
 
-from inferport import Backend, Client, serve
+from inferport import Backend, Client, InferenceSpec, ObjectSpec, ScalarSpec, TensorSpec, serve
 from inferport.codec import MAX_MESSAGE_BYTES, decode, encode
 
 
 class Echo(Backend):
+    def describe(self):
+        fields = {
+            "state": TensorSpec("float32", (32,)),
+            "image": TensorSpec("uint8", (224, 224, 3)),
+            "images": TensorSpec("uint8", (3, 480, 640, 3)),
+            "batch_images": TensorSpec("uint8", (8, 3, 224, 224, 3)),
+            "batch_state": TensorSpec("float32", (8, 32)),
+            "array": TensorSpec("uint8", (MAX_MESSAGE_BYTES - 1024,)),
+            "stats": ScalarSpec("boolean"),
+        }
+        outputs = {
+            **fields,
+            "cpu": ScalarSpec("number"),
+            "peak_rss_kib": ScalarSpec("integer"),
+        }
+        return InferenceSpec(
+            ObjectSpec(fields, optional=tuple(fields)),
+            ObjectSpec(outputs, optional=tuple(outputs)),
+        )
+
     def infer(self, inputs):
         if inputs.get("stats") is True:
             return {
@@ -73,8 +93,8 @@ def cases():
     yield (
         "batch8",
         {
-            "images": np.zeros((8, 3, 224, 224, 3), dtype=np.uint8),
-            "state": np.ones((8, 32), dtype=np.float32),
+            "batch_images": np.zeros((8, 3, 224, 224, 3), dtype=np.uint8),
+            "batch_state": np.ones((8, 32), dtype=np.float32),
         },
     )
     yield "near64MiB", {"array": np.zeros(MAX_MESSAGE_BYTES - 1024, dtype=np.uint8)}

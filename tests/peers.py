@@ -7,7 +7,7 @@ import socket
 import struct
 import threading
 
-from inferport import codec, protocol
+from inferport import InferenceSpec, ObjectSpec, codec, protocol
 
 
 def exact(sock, count):
@@ -65,12 +65,12 @@ def handshake(sock):
     )
     sock.sendall(
         b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
-        b"Sec-WebSocket-Protocol: inferport.v1\r\nSec-WebSocket-Accept: " + accept + b"\r\n\r\n"
+        b"Sec-WebSocket-Protocol: inferport.v2\r\nSec-WebSocket-Accept: " + accept + b"\r\n\r\n"
     )
 
 
 @contextlib.contextmanager
-def peer(handler, *, upgrade=True, ready=True):
+def peer(handler, *, upgrade=True, ready=True, describe=True, spec=None):
     release = threading.Event()
     errors = []
     with socket.socket() as listener:
@@ -87,6 +87,20 @@ def peer(handler, *, upgrade=True, ready=True):
                         handshake(sock)
                     if ready:
                         sock.sendall(frame(codec.encode(protocol.success(0, {}))))
+                        if describe:
+                            opcode, raw = recv_frame(sock)
+                            assert opcode == 2
+                            assert codec.decode(raw) == {"id": 1, "op": "describe", "data": {}}
+                            declared = (
+                                spec
+                                if spec is not None
+                                else InferenceSpec(ObjectSpec(), ObjectSpec())
+                            )
+                            sock.sendall(
+                                frame(
+                                    codec.encode(protocol.success(1, {"spec": declared.to_dict()}))
+                                )
+                            )
                     handler(sock, release)
             except (BrokenPipeError, ConnectionResetError):
                 pass

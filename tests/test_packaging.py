@@ -61,8 +61,9 @@ def test_ctrl_c_closes_backend(tmp_path):
     script = tmp_path / "server.py"
     script.write_text(
         "from pathlib import Path\n"
-        "from inferport import Backend, serve\n"
+        "from inferport import Backend, InferenceSpec, ObjectSpec, serve\n"
         "class B(Backend):\n"
+        "    def describe(self): return InferenceSpec(ObjectSpec(), ObjectSpec())\n"
         "    def infer(self, inputs): return inputs\n"
         f"    def close(self): Path({str(marker)!r}).write_text('closed')\n"
         f"serve(B(), port={port})\n"

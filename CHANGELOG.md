@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.2.0 — Unreleased
+
+- Accept codec-supported NumPy scalar backend outputs in typed contracts, preserving
+  boolean/numeric separation, finite/range checks and the original backend payload.
+- Add `Backend.describe()` / `Client.describe()` and portable typed input, output
+  and reset-context contracts, with fixed/bounded arrays and directional compatibility checks.
+- Require every backend to implement `describe() -> InferenceSpec`; remove untyped operation.
+  Validate requests before backend state changes and outputs before transmission.
+  Snapshot the contract on the backend worker per connection, before READY.
+- Fetch and cache the contract during `Client.connect()` under the opening deadline;
+  `Client.describe()` reads that cache and `infer()` validates received outputs.
+  Invalid remote contracts/results close the connection with `ProtocolError`.
+- Add the model-independent `robotics.joint-targets.v1` profile for RGB camera roles,
+  ordered state/action channels, units, absolute targets and declared action horizons.
+  Application diagnostics and seed options are declared by adapters, outside the base profile.
+  No environment base class, action scheduling or conversions are added.
+- **Wire change:** require `inferport.v2` on both endpoints. v1 is rejected explicitly;
+  READY/reset remain empty acknowledgments, and `describe` is a separate operation.
+
 ## 0.1.0 — 2026-09-26
 
 - Add model-independent `Backend`, `Client`, and `serve` APIs for policy, value,

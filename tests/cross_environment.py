@@ -19,12 +19,66 @@ import msgpack
 import numpy as np
 import websockets
 
-from inferport import Backend, Client, serve
+from inferport import (
+    Backend,
+    Channel,
+    Client,
+    Dimension,
+    InferenceSpec,
+    ObjectSpec,
+    ScalarSpec,
+    TensorSpec,
+    check_compatibility,
+    serve,
+)
+from inferport.robotics import joint_target_spec
 
 
 class Echo(Backend):
+    def describe(self):
+        payload = ObjectSpec(
+            {
+                "image": TensorSpec("uint8", (224, 224, 3)),
+                "state": TensorSpec("float32", (4, 8)),
+                "batch": TensorSpec("float64", (8, 4, 7)),
+                "context": ObjectSpec(
+                    {
+                        "text": ScalarSpec("string"),
+                        "scalar": ScalarSpec("integer"),
+                        "score": ScalarSpec("number"),
+                        "done": ScalarSpec("boolean"),
+                    }
+                ),
+            }
+        )
+        return InferenceSpec(payload, payload, ObjectSpec({"instruction": ScalarSpec("string")}))
+
     def infer(self, inputs):
-        return inputs
+        return {
+            **inputs,
+            "context": {
+                **inputs["context"],
+                "scalar": np.int64(inputs["context"]["scalar"]),
+                "score": np.float32(inputs["context"]["score"]),
+                "done": np.bool_(inputs["context"]["done"]),
+            },
+        }
+
+
+def policy_spec(horizon):
+    return joint_target_spec(
+        cameras={"head": (2, 3)},
+        channels=(Channel("joint1", "joint_position", "rad"),),
+        horizon=horizon,
+    )
+
+
+class Policy(Backend):
+    def describe(self):
+        return policy_spec(16)
+
+    def infer(self, inputs):
+        return {"action": np.repeat(inputs["state"][None], 16, axis=0)}
 
 
 def versions():
@@ -49,7 +103,7 @@ def wait_listening(port, process):
     raise TimeoutError("server startup")
 
 
-def interchange(server_python, client_python):
+def interchange(server_python, client_python, backend):
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
@@ -66,13 +120,15 @@ def interchange(server_python, client_python):
             "--stop-file",
             str(marker),
         ]
+        extra = ["--backend", backend]
+        command.extend(extra)
         process = subprocess.Popen(
             command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=temp
         )
         try:
             wait_listening(port, process)
             result = subprocess.run(
-                [client_python, script, "--role", "client", "--port", str(port)],
+                [client_python, script, "--role", "client", "--port", str(port), *extra],
                 check=True,
                 capture_output=True,
                 text=True,
@@ -91,7 +147,12 @@ def interchange(server_python, client_python):
             raise RuntimeError(err)
         print(
             json.dumps(
-                {"server": json.loads(out), "client": json.loads(result.stdout), "result": "passed"}
+                {
+                    "server": json.loads(out),
+                    "client": json.loads(result.stdout),
+                    "backend": backend,
+                    "result": "passed",
+                }
             )
         )
 
@@ -103,6 +164,7 @@ def main():
     parser.add_argument("--role", choices=["server", "client"])
     parser.add_argument("--port", type=int)
     parser.add_argument("--stop-file", type=Path)
+    parser.add_argument("--backend", choices=["echo", "policy"], default="echo")
     args = parser.parse_args()
     if args.role == "server":
         logging.getLogger("websockets.server").setLevel(logging.CRITICAL)
@@ -116,7 +178,7 @@ def main():
         watcher = threading.Thread(target=watch, daemon=True)
         watcher.start()
         try:
-            serve(Echo(), port=args.port, stop_event=stop)
+            serve(Policy() if args.backend == "policy" else Echo(), port=args.port, stop_event=stop)
         finally:
             stop.set()
             watcher.join()
@@ -126,9 +188,30 @@ def main():
             "image": np.arange(224 * 224 * 3, dtype=np.uint8).reshape(224, 224, 3),
             "state": np.arange(64, dtype=">f4").reshape(4, 16)[:, ::2],
             "batch": np.ones((8, 4, 7), dtype=np.float64),
-            "context": {"text": "测试", "raw": b"\x00\xff", "scalar": np.int32(3)},
+            "context": {
+                "text": "测试",
+                "scalar": np.int32(3),
+                "score": np.float32(0.5),
+                "done": np.bool_(True),
+            },
         }
         with Client(f"ws://127.0.0.1:{args.port}") as client:
+            if args.backend == "policy":
+                declared = client.describe()
+                check_compatibility(declared, policy_spec(Dimension(1, 100)))
+                client.reset({"instruction": "move"})
+                result = client.infer(
+                    {
+                        "images.head": np.zeros((2, 3, 3), np.uint8),
+                        "state": np.array([0.5], np.float32),
+                        "instruction": "move",
+                    }
+                )
+                declared.outputs.validate(result)
+                np.testing.assert_array_equal(result["action"], np.full((16, 1), 0.5, np.float32))
+                print(json.dumps(versions()))
+                return
+            assert client.describe() == Echo().describe()
             client.reset({"instruction": "trial"})
             for _ in range(3):
                 result = client.infer(payload)
@@ -136,11 +219,14 @@ def main():
                     np.testing.assert_array_equal(result[name], payload[name])
                     assert result[name].flags.writeable and result[name].dtype.isnative
                 assert result["context"] == payload["context"]
+                for name, scalar_type in (("scalar", int), ("score", float), ("done", bool)):
+                    assert type(result["context"][name]) is scalar_type
         print(json.dumps(versions()))
     else:
         a, b = os.path.abspath(args.python_a), os.path.abspath(args.python_b)
-        interchange(a, b)
-        interchange(b, a)
+        for backend in ("echo", "policy"):
+            interchange(a, b, backend)
+            interchange(b, a, backend)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 # InferPort 协议与接口参考
 
-更新日期：2026-09-26。对应 SDK 0.1.0、线协议 `inferport.v1`；实测范围见 [验证概览](validation.md)。
+更新日期：2026-10-02。对应未发布 SDK 0.2.0、线协议 `inferport.v2`；实测范围见 [验证概览](validation.md)。
 
 本文定义已实现的公开 API、数据格式、连接生命周期和回归要求，后续修改须同步维护。
 快速使用见 [README](../README.md)，下一阶段工作见 [真实推理验证计划](integration-validation.md)。
@@ -21,8 +21,7 @@ InferPort 是一个轻量的 Python 推理通信库。模型算法与执行环�
 - 两端可以使用不同 Python、NumPy、模型框架和设备，只须遵守同一个线协议版本。
 
 首版范围之外：RTC 算法、动作队列与调度、机器人/环境基类、训练、自动 batch 聚合、
-多个并发会话、多模型路由、流式生成、请求取消、自动重试、服务发现、通用 `describe()`、
-schema DSL、传输插件和动态远程方法调用。这些能力不预留空框架。
+多个并发会话、多模型路由、流式生成、请求取消、自动重试、服务发现、传输插件和动态远程方法调用。这些能力不预留空框架。
 
 ## 2. 三个仓库的职责
 
@@ -40,7 +39,7 @@ flowchart LR
 
 | 所有者 | 负责的内容 |
 |---|---|
-| InferPort | 连接、请求响应、数组编码、协议版本、错误与生命周期 |
+| InferPort | 连接、请求响应、数组编码、协议版本、数据契约与兼容校验、错误与生命周期 |
 | 模型仓库 | 权重与设备、推理、模型状态、processor 状态、输入输出语义校验 |
 | 执行仓库 | 观测采集、字段转换、动作消费、执行频率、设备控制与本地保护 |
 
@@ -48,7 +47,7 @@ flowchart LR
 安装和导入 InferPort 不得加载 Torch、JAX、CUDA、LeRobot、ROS、Gymnasium 或机器人 SDK。
 
 能传数组不等于模型适用于任意机器人。适配双方必须约定相机含义、RGB/BGR、HWC/CHW、
-关节顺序、单位、坐标系、绝对/相对动作、时间维度和归一化归属；这些记录在适配器文档和测试里。
+关节顺序、单位、坐标系、绝对/相对动作、时间维度和归一化归属；这些通过公开数据契约声明，并在各端适配器测试中验证。
 InferPort 不做隐式 resize、图像压缩、类型降精度、归一化、动作映射或 batch 维度推断。
 
 ## 3. 技术选型
@@ -134,6 +133,9 @@ class Backend(ABC):
     @abstractmethod
     def infer(self, inputs: Payload) -> Payload: ...
 
+    @abstractmethod
+    def describe(self) -> InferenceSpec: ...
+
     def reset(self, context: Payload) -> None:
         pass
 
@@ -141,13 +143,13 @@ class Backend(ABC):
         pass
 ```
 
-- 用户继承 `Backend`；只要求实现 `infer()`。无状态 value/reward 后端可以完全忽略两个默认钩子。
+- 用户继承 `Backend`，必须实现 `describe()` 和 `infer()`。无状态后端可使用默认 reset/close 钩子。
 - 模型加载通常放在构造或模型仓库自己的初始化代码中，每个服务进程只加载一次。
 - 服务期间 Backend 由 serve 独占；调用方不得另开线程直接调用它，或在使用期间 fork 后复用 Client。
 - `reset(context)` 清空本轮状态并完整替换上下文，不能只增量合并；空字典必须是合法的清理请求。
 - 有状态后端必须覆盖模型、processor、缓存和自有动作队列的重置；权重无须重新加载。
 - `close()` 在服务生命周期结束时释放后端资源，不在每次断连时卸载权重。
-- 服务启动后的 `infer/reset/close` 均在同一个工作线程中串行调用；构造函数由调用方执行。
+- 服务启动后的 `describe/infer/reset/close` 均在同一个工作线程中串行调用；构造函数由调用方执行。
   构造与推理有线程亲和要求的框架，在首次 `reset({})` 中加载模型，后续重置保留模型资源。
   参见 [线程绑定模型示例](../examples/thread_bound_backend.py)；首次加载计入客户端等待 READY 的期限。
 - 可预期的输入问题抛出 `InvalidInput`，且必须在修改后端状态之前完成这类校验。
@@ -168,6 +170,7 @@ class Client:
     ): ...
 
     def connect(self) -> Client: ...
+    def describe(self) -> InferenceSpec: ...
     def infer(self, inputs: Payload, *, timeout: float | None = None) -> Payload: ...
     def reset(self, context: Payload | None = None, *, timeout: float | None = None) -> None: ...
     def close(self) -> None: ...
@@ -175,8 +178,10 @@ class Client:
     def __exit__(self, exc_type, exc, traceback) -> None: ...
 ```
 
-构造不连接；`connect()` 或进入 `with` 后连接，并等待服务端初始化确认。已连接时重复 connect 无副作用。
-尚未连接时调用 infer/reset 抛出 `RuntimeError`。关闭或故障后的对象不复用，重新创建 Client。
+构造不连接；`connect()` 或进入 `with` 后连接，等待服务端初始化确认，并读取、校验、缓存契约。
+握手、READY 和 describe 交换共用一次 open_timeout；describe 等待超时的 stage 为 describe。
+已连接时重复 connect 无副作用。`describe()` 仅读取当前连接的不可变缓存，无 I/O 或 timeout 参数。
+尚未连接时调用 describe/infer/reset 抛出 `RuntimeError`。关闭或故障后的对象不复用，重新创建 Client。
 `close()` 幂等；不提供自动重连或自动重放。退出上下文不吞掉原异常。
 
 所有业务方法要求同一调用方顺序使用；用非阻塞调用锁检测重入和并发调用并抛出 `RuntimeError`，
@@ -227,14 +232,18 @@ def serve(
 
 ```python
 import numpy as np
-from inferport import Backend, InvalidInput, serve
+from inferport import Backend, Dimension, InferenceSpec, ObjectSpec, TensorSpec, serve
 
 
 class ValueBackend(Backend):
+    def describe(self):
+        return InferenceSpec(
+            ObjectSpec({"state": TensorSpec("float32", (Dimension(), Dimension()))}),
+            ObjectSpec({"value": TensorSpec("float32", (Dimension(),))}),
+        )
+
     def infer(self, inputs):
-        state = inputs.get("state")
-        if not isinstance(state, np.ndarray) or state.ndim != 2:
-            raise InvalidInput("state must be an array with shape [B, D]")
+        state = inputs["state"]
         return {"value": np.sum(state * state, axis=-1)}
 
 
@@ -266,7 +275,7 @@ with Client("ws://model-host:8000") as client:
 
 `make_model_inputs()` 定义相机/状态对应关系；`execute_action_chunk()` 决定执行几步、频率和插值。
 InferPort 不自动执行完整 chunk，也不在网络线程控制硬件。value/reward/Q 后端通常无须 reset。
-`actions`、`state`、`instruction`、`value` 都是此处适配器的业务字段，不是协议保留字段。
+`actions`、`state`、`instruction`、`value` 不属于通用信封保留字段；选择机器人策略 profile 时，payload 必须符合该 profile 的字段约定。
 
 具体模型接入须对照其原生推理入口验证 processor、状态清理和输出语义，
 步骤见 [真实推理验证计划](integration-validation.md)。
@@ -275,7 +284,8 @@ InferPort 不自动执行完整 chunk，也不在网络线程控制硬件。valu
 
 ### 6.1 数据值集合
 
-支持 `None`、bool、str、bytes、Python int、float、list、字符串键 dict、受支持的 ndarray。
+codec 支持 `None`、bool、str、bytes、Python int、float、list、字符串键 dict、受支持的 ndarray。
+业务 infer/reset 数据还必须满足公开契约；当前规格支持标量、数值数组和对象，不支持声明 null、bytes 或 list 字段。
 发送方可以输入 tuple，接收方统一得到 list。NumPy bool/整数/浮点标量规范化成 Python 标量，
 标量不承诺保留 NumPy dtype；需要保留 dtype 时使用零维 ndarray。
 
@@ -335,11 +345,11 @@ MessagePack 的扩展类型避免数组标记与用户字典字段碰撞；格�
   网络大小限制在解码前生效；嵌套与总节点检查还需要结构遍历。
 - 不承诺总进程内存小于消息上限：编码、解码、可写数组和 Python 容器均有额外内存开销。
 
-## 7. WebSocket 与线协议 v1
+## 7. WebSocket 与线协议 v2
 
 ### 7.1 连接与就绪
 
-端点为 `/`。必须协商 WebSocket subprotocol `inferport.v1`；缺失或不匹配时拒绝连接。
+端点为 `/`。必须协商 WebSocket subprotocol `inferport.v2`；缺失或不匹配时拒绝连接。
 不通过包版本字符串猜测兼容性，不静默回退为 JSON 或其他协议。
 
 握手完成后，服务端尝试取得唯一活动连接的所有权。获得所有权后执行 `backend.reset({})`，
@@ -349,8 +359,9 @@ MessagePack 的扩展类型避免数组标记与用户字典字段碰撞；格�
 {"id": 0, "ok": true, "data": {}}
 ```
 
-`Client.connect()` 收到并验证该响应后才返回。这个步骤仅确认状态已清理、后端可接受请求，
-不携带模型名称、输入 schema、能力描述或任意 metadata。
+服务在初始 reset 后读取并校验 Backend.describe()；READY 仅确认后端可接受请求，
+不携带模型名称、schema 或 metadata。`Client.connect()` 验证 READY 后自动发送 ID=1 的 describe，
+收到有效契约后才返回；后续首个 infer/reset 使用 ID=2。线协议仍允许独立 describe 请求。
 第二个连接收到 ID 为 0 的 `busy` 错误，随后关闭，不排队，也不调用 Backend。
 
 唯一所有权在握手后的连接处理器中原子取得，不能在 HTTP 握手开始时提前占住后又漏释放。
@@ -376,10 +387,10 @@ MessagePack 的扩展类型避免数组标记与用户字典字段碰撞；格�
 
 - 请求 ID 为 `[1, 2**63-1]` 内整数，在一个连接内严格递增，不接受 bool、复用或倒退。
   ID 为 0 仅用于就绪/接入结果；达到上限后建立新连接，不绕回。
-- 操作仅有 `infer` 与 `reset`。reset 成功响应 data 必须为空字典，infer 响应为 Backend 结果字典。
+- 操作为 `infer`、`reset` 和 `describe`。reset 成功响应 data 必须为空字典，infer 响应为 Backend 结果字典。
 - 请求键严格为 id/op/data；成功响应为 id/ok/data；错误响应为 id/ok/error。
   不允许重复键、未知信封字段、错误字段类型或 ok 同时携带 data 和 error。
-- error 的键严格为 code/message/fatal，类型分别为 str/str/bool；v1 只接受下表列出的线协议错误码。
+- error 的键严格为 code/message/fatal，类型分别为 str/str/bool；v2 只接受下表列出的线协议错误码。
   非 fatal 错误仅允许 invalid_input。握手阶段的 unauthorized 是本地映射，不属于业务错误信封。
 - Client 必须验证 ID 对应关系和响应结构；不匹配即废弃连接，禁止把旧结果交给下一次调用。
 - SDK 每次等待当前调用完成后再发下一个请求；不提供 pipeline 或响应重排功能。
@@ -440,7 +451,7 @@ Running 转入 Cleaning 表示结果已不再交付，后端实际工作可能�
 
 ### 8.2 超时的准确含义
 
-- `open_timeout` 覆盖 Client 发起建连、WebSocket 协商和等待 id=0 就绪响应。
+- `open_timeout` 覆盖 Client 发起建连、WebSocket 协商、等待 id=0 就绪响应与 id=1 契约响应。
 - `timeout` 从本地输入校验和编码完成后开始，覆盖发送请求、服务端等待/推理和接收完整响应。
   本地编码及回包解码不计入该网络交换期限；不把它描述为硬实时的整个 Python 方法上限。
 - 服务端 `send_timeout` 限制发送 ready、响应或错误的网络等待，不是强制中断模型计算的时限。
@@ -467,7 +478,7 @@ I/O 实现用 Python 3.10 可用的异步等待机制覆盖 send+recv，并在�
 ### 8.3 服务端执行与停止
 
 服务端始终保留实际工作 future 的所有权。网络任务取消不应让代码误判底层推理已经结束。
-用独立的单线程 executor 依次执行 infer/reset/close；关闭处理不能与尚在执行的模型调用并发。
+用独立的单线程 executor 依次执行 describe/infer/reset/close；关闭处理不能与尚在执行的模型调用并发。
 需要屏蔽网络取消对工作 future 的传播，等待实际执行结束，再提交清理。
 服务端的大数组解码、后端调用和响应编码也排入这一串行工作线程，避免长时间占用网络循环。
 固定且很小的 ready / busy / 错误控制信封直接在网络循环编码，避免 busy 被活动后端的长计算阻塞。
@@ -535,7 +546,7 @@ src/inferport/
   backend.py               # Backend 与 Payload 类型
   client.py                # 同步 Client 门面与连接生命周期
   server.py                # serve 与单后端执行/清理
-  protocol.py              # v1 消息结构、校验和错误映射
+  protocol.py              # v2 消息结构、校验和错误映射
   codec.py                 # MessagePack / ndarray 格式与限制
   errors.py                # 公共异常
   _io.py                   # 私有 I/O 循环、deadline 和关闭助手
@@ -621,3 +632,66 @@ benchmarks/
 
 设计选型的诊断和参考项目对照保存在
 [首版研究归档](archive/design-notes.md)。已执行的结果和剩余缺口见 [验证概览](validation.md)。
+
+
+## Input-output contracts (v2)
+
+每个 Backend 必须实现 `describe()` 并返回
+`InferenceSpec(inputs, outputs, context, profile)`；三个数据结构均为 ObjectSpec。
+没有无规格模式，也不为旧 Backend 提供默认声明；返回 None 或其他非法值会使服务初始化失败。
+初始化 reset({}) 之后，服务在同一 backend worker 上读取一次声明、校验并复制为连接级快照。
+后续 describe 只读取快照，不能触发推理、更新随机数或重置状态。显式 reset 不改变契约。
+SDK 的 Client 在连接时获取一次并缓存；其公开 describe 方法只读缓存，不重复发送请求。
+
+```text
+request:  {id: 1, op: "describe", data: {}}
+response: {id: 1, ok: true, data: {spec: <specification>}}
+```
+
+describe 请求 data 必须为空，否则返回非致命 invalid_input。规格表示严格为 version=1、profile、
+inputs、outputs、context；未知字段/版本或非法描述均拒绝。客户端收到非法描述时关闭连接并抛出
+ProtocolError。声明无效导致连接初始化失败，沿用已有 backend_error/清理语义。
+
+- TensorSpec：canonical 数值 dtype、最多 32 维 shape、semantic、axes、channels、finite。
+  shape 元素为非负整数，或有 minimum/maximum 的 Dimension；不支持无界维度和跨字段符号推导。
+  channels 为最后一维的有序 Channel(name, semantic, unit)，名称不重复。
+- ScalarSpec：string/integer/number/boolean；支持数值上下界与非空字符串。bool 不作为 integer/number。
+  接受 codec 支持的 NumPy bool/整数/浮点标量（最多 8 字节），按其 Python 标量表示检查，
+  不替换调用方 payload 中的值；实际标量转换仍由 codec 完成。有限性和上下界规则不变。
+- ObjectSpec：字段映射和 optional 字段名列表；拒绝未知字段。公开规格最多嵌套 16 层，
+  每个对象最多 256 个字段，仍受消息大小/codec 节点限制。
+- 服务端在 infer/非空 reset 前校验输入/context，失败返回 invalid_input，backend 不被调用。
+  空 reset({}) 始终合法。infer 结果不满足 outputs 时返回致命 invalid_output。
+- Client 在返回推理结果前按缓存的 outputs 校验；失败关闭连接并抛出 ProtocolError，业务层不会拿到非法结果。
+  发送前的检查不能替代接收边界检查。Backend 无须重复 serve 已完成的格式校验，但应在状态变更前
+  检查指令一致性等业务规则；绕过 serve 直接调用 Backend 的代码自行满足其数据契约。
+- check_compatibility(service, execution) 校验 execution 输入/context 的所有允许值都被 service
+  接受，service 输出的所有允许值都被 execution 接受。profile、语义、轴顺序、通道名称/顺序/单位
+  必须一致；shape 使用范围包含关系。它不证明模型能力或权重身份。
+
+### robotics.joint-targets.v1
+
+由 inferport.robotics.joint_target_spec(cameras=..., channels=..., horizon=...,
+state_semantic=...) 构造。两端各自声明实际相机角色/尺寸、通道与 horizon。执行端可用有界
+Dimension 接收不同服务的固定 horizon；模型端必须如实声明自己的输出。
+
+输入为 images.<物理相机角色>（uint8 HWC RGB）、state（float32 [D]）、instruction（非空字符串）。
+state_semantic 为 joint_targets（控制目标）或 joint_positions（测量位置）。图像不由公共库缩放，
+模型 feature 名称、归一化与 processor 由模型侧适配。
+
+输出 action 为有限 float32 [H,D]，H 至少为 1，语义为 absolute_joint_targets。
+通道含义为 joint_position/rad、joint_position/m 或 gripper_position/fraction（0 闭合、1 张开）。
+关节值属于机器人原生关节坐标；这些是顺序目标点，时长由执行器决定，并非固定周期轨迹。
+profile 不适用于增量、力矩、末端位姿或固定 dt 轨迹。公共库不截断、补齐、插值、裁剪或执行动作。
+执行端自行选择每次执行 min(K,H) 个目标，并逐步检查本地终止条件。
+
+非空 context 必须提供 instruction。应用负责确认每次观测指令与 reset 上下文一致。
+基础 profile 不定义耗时、显存、评估任务/场景或模型随机种子。需要这些字段的应用用
+dataclasses.replace 和 ObjectSpec 扩展 outputs/context，并在两端声明各自实际支持的字段。
+通用 InferPort 核心只固定信封字段；业务字段名、嵌套结构由接入方声明，不需要注册插件或传递 Python 类。
+
+### Migration
+
+0.2.0 只协商 inferport.v2，双方需同时更新。v1 不支持 describe，READY/reset 数据为空的规则
+不能被扩展元数据破坏。v2 使用独立 describe RPC，不用特殊 infer 输入模拟控制操作。
+旧 Backend 必须补齐 describe 和实际数据契约，两端按新接口同步更新；不提供兼容层。

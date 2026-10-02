@@ -18,7 +18,7 @@ class RequestTimeout(TransportError):
 
 
 class ProtocolError(Error):
-    """The peer violated InferPort v1."""
+    """The peer violated InferPort v2."""
 
 
 class RemoteError(Error):

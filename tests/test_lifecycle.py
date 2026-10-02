@@ -8,15 +8,30 @@ from inferport import (
     Backend,
     Client,
     Error,
+    InferenceSpec,
     InvalidInput,
+    ObjectSpec,
     RemoteError,
     RequestTimeout,
+    ScalarSpec,
     TransportError,
     serve,
 )
 
 
 class Counter(Backend):
+    def describe(self):
+        flags = ("invalid", "crash", "bad_output", "block")
+        context = ObjectSpec(
+            {"instruction": ScalarSpec("string"), "new": ScalarSpec("integer")},
+            optional=("instruction", "new"),
+        )
+        return InferenceSpec(
+            ObjectSpec({key: ScalarSpec("boolean") for key in flags}, optional=flags),
+            ObjectSpec({"value": ScalarSpec("integer"), "context": context}),
+            context,
+        )
+
     def __init__(self):
         self.condition = threading.Condition()
         self.calls = []
@@ -297,13 +312,20 @@ def test_cleanup_still_rejects_new_owners(server):
 @pytest.mark.parametrize("message", ["x" * 1024, "\ud800"])
 def test_invalid_input_diagnostic_cannot_break_small_message_budget(server, message):
     class Validation(Backend):
+        def describe(self):
+            return InferenceSpec(
+                ObjectSpec({"invalid": ScalarSpec("boolean")}, optional=("invalid",)),
+                ObjectSpec(),
+            )
+
         def infer(self, inputs):
             if inputs:
                 raise InvalidInput(message)
             return {}
 
-    with server(Validation(), max_message_bytes=128) as (uri, _, _, errors):
-        with Client(uri, max_message_bytes=128) as client:
+    # The budget must fit the connection's contract as well as normal responses.
+    with server(Validation(), max_message_bytes=512) as (uri, _, _, errors):
+        with Client(uri, max_message_bytes=512) as client:
             with pytest.raises(RemoteError) as error:
                 client.infer({"invalid": True})
             assert not error.value.fatal and error.value.message == "Input rejected"

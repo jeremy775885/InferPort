@@ -6,13 +6,24 @@ from pathlib import Path
 
 import numpy as np
 
-from inferport import Backend, Client
+from inferport import Backend, Client, InferenceSpec, ObjectSpec, TensorSpec
 
 EXAMPLE = Path(__file__).resolve().parents[1] / "examples" / "thread_bound_backend.py"
 
 
 def test_reused_backend_buffer_does_not_change_previous_results(server):
     class ReusingBackend(Backend):
+        def describe(self):
+            return InferenceSpec(
+                ObjectSpec(),
+                ObjectSpec(
+                    {
+                        "values": TensorSpec("float32", (2, 4)),
+                        "nested": ObjectSpec({"slice": TensorSpec("float32", (2, 2))}),
+                    }
+                ),
+            )
+
         def __init__(self):
             self.buffer = np.zeros((2, 4), dtype=np.float32)
             self.calls = 0

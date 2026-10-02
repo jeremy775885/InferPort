@@ -12,9 +12,12 @@ from websockets.sync.client import connect
 
 from inferport import (
     Client,
+    InferenceSpec,
+    ObjectSpec,
     ProtocolError,
     RemoteError,
     RequestTimeout,
+    TensorSpec,
     TransportError,
     _io,
     codec,
@@ -79,15 +82,15 @@ def test_close_is_bounded_when_write_buffer_is_blocked(monkeypatch, explicit_clo
         await asyncio.wait_for(ws.wait_closed(), 1)
         assert time.monotonic() - start < 1
 
-    with peer(quiet) as uri:
+    with peer(quiet, describe=False) as uri:
         asyncio.run(check(uri))
 
 
 @pytest.mark.parametrize(
     "reply",
     [
-        codec.encode(protocol.success(2, {})),
-        codec.encode({"id": 1, "ok": True, "data": []}),
+        codec.encode(protocol.success(3, {})),
+        codec.encode({"id": 2, "ok": True, "data": []}),
         b"\xc1",
         "text",
     ],
@@ -196,6 +199,11 @@ def test_duplicate_request_id_and_size_limit(server):
 
 def test_server_send_timeout_cleans_up(server):
     class Large(Counter):
+        def describe(self):
+            return InferenceSpec(
+                ObjectSpec(), ObjectSpec({"image": TensorSpec("uint8", (16 * 1024 * 1024,))})
+            )
+
         def infer(self, inputs):
             self.record("infer")
             return {"image": np.zeros(16 * 1024 * 1024, dtype=np.uint8)}
@@ -214,7 +222,7 @@ def test_server_send_timeout_cleans_up(server):
                 b"GET / HTTP/1.1\r\nHost: localhost\r\n"
                 b"Upgrade: websocket\r\nConnection: Upgrade\r\n"
                 b"Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: MDEyMzQ1Njc4OWFiY2RlZg==\r\n"
-                b"Sec-WebSocket-Protocol: inferport.v1\r\n\r\n"
+                b"Sec-WebSocket-Protocol: inferport.v2\r\n\r\n"
             )
             headers(sock)
             recv_frame(sock)
@@ -239,6 +247,11 @@ def test_shutdown_bounds_library_initiated_close(server, monkeypatch):
     monkeypatch.setattr(_io.ServerSocket, "send", observed_send)
 
     class Large(Counter):
+        def describe(self):
+            return InferenceSpec(
+                ObjectSpec(), ObjectSpec({"image": TensorSpec("uint8", (16 * 1024 * 1024,))})
+            )
+
         def infer(self, inputs):
             return {"image": np.zeros(16 * 1024 * 1024, dtype=np.uint8)}
 
@@ -252,7 +265,7 @@ def test_shutdown_bounds_library_initiated_close(server, monkeypatch):
             b"GET / HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\n"
             b"Connection: Upgrade\r\nSec-WebSocket-Version: 13\r\n"
             b"Sec-WebSocket-Key: MDEyMzQ1Njc4OWFiY2RlZg==\r\n"
-            b"Sec-WebSocket-Protocol: inferport.v1\r\n\r\n"
+            b"Sec-WebSocket-Protocol: inferport.v2\r\n\r\n"
         )
         headers(sock)
         recv_frame(sock)

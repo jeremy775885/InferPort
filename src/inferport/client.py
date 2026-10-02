@@ -12,6 +12,7 @@ from . import codec, protocol
 from ._io import CLOSE_TIMEOUT, ClientSocket, positive_timeout, validate_token
 from .backend import Payload
 from .errors import ProtocolError, RemoteError, RequestTimeout, TransportError
+from .specs import InferenceSpec, SpecError
 
 
 class Client:
@@ -37,6 +38,7 @@ class Client:
         self._connected = self._closed = False
         self._loop = self._thread = self._ws = self._active = None
         self._id = 0
+        self._spec: InferenceSpec
 
     def _start(self):
         self._loop = asyncio.new_event_loop()
@@ -96,9 +98,19 @@ class Client:
                 **kwargs,
             )
             if self._ws.subprotocol != protocol.SUBPROTOCOL:
-                raise ProtocolError("Server didn't negotiate inferport.v1")
+                raise ProtocolError("Server didn't negotiate inferport.v2")
             stage = "ready"
-            return await self._ws.recv()
+            raw = await self._ws.recv()
+            protocol.response(codec.decode(raw, self._limit), 0, empty=True)
+            stage = "describe"
+            await self._ws.send(codec.encode({"id": 1, "op": "describe", "data": {}}, self._limit))
+            result = protocol.response(codec.decode(await self._ws.recv(), self._limit), 1)
+            try:
+                if set(result) != {"spec"}:
+                    raise SpecError("Malformed description response")
+                return InferenceSpec.from_dict(result["spec"])
+            except SpecError as exc:
+                raise ProtocolError("Invalid inference specification") from exc
 
         try:
             return await asyncio.wait_for(opening(), self._open_timeout)
@@ -126,11 +138,11 @@ class Client:
                     return self
                 self._start()
             try:
-                raw = self._submit(self._open())
-                protocol.response(codec.decode(raw, self._limit), 0, empty=True)
+                self._spec = self._submit(self._open())
                 with self._state_lock:
                     if self._closed:
                         raise TransportError("Client was closed while connecting")
+                    self._id = 1
                     self._connected = True
                 return self
             except BaseException:
@@ -179,9 +191,17 @@ class Client:
             self._id = request_id
             try:
                 raw = self._submit(self._exchange(encoded, deadline))
-                return protocol.response(
+                result = protocol.response(
                     codec.decode(raw, self._limit), request_id, empty=op == "reset"
                 )
+                if op == "infer":
+                    try:
+                        self._spec.outputs.validate(result, "outputs")
+                    except SpecError as exc:
+                        raise ProtocolError(
+                            f"Response violates the output contract: {exc}"
+                        ) from exc
+                return result
             except RemoteError as exc:
                 if exc.fatal:
                     self._dispose(abort=True)
@@ -189,6 +209,18 @@ class Client:
             except BaseException:
                 self._dispose(abort=True)
                 raise
+        finally:
+            self._call_lock.release()
+
+    def describe(self) -> InferenceSpec:
+        """Read the immutable contract cached by connect; no network request."""
+        if not self._call_lock.acquire(blocking=False):
+            raise RuntimeError("Concurrent Client calls aren't supported")
+        try:
+            with self._state_lock:
+                if not self._connected or self._closed:
+                    raise RuntimeError("Client must be connected and usable")
+                return self._spec
         finally:
             self._call_lock.release()
 

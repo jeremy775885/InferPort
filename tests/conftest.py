@@ -5,10 +5,20 @@ import time
 
 import pytest
 
-from inferport import Backend, serve
+from inferport import Backend, InferenceSpec, ObjectSpec, ScalarSpec, TensorSpec, serve
 
 
 class Echo(Backend):
+    def describe(self):
+        fields = {
+            "image": TensorSpec("uint8", (480, 640, 3)),
+            "batch": TensorSpec("float32", (8, 16)),
+            "ok": ScalarSpec("integer"),
+            "id": ScalarSpec("integer"),
+        }
+        payload = ObjectSpec(fields, optional=tuple(fields))
+        return InferenceSpec(payload, payload)
+
     def infer(self, inputs):
         return inputs
 
