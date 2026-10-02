@@ -222,7 +222,7 @@ def test_server_send_timeout_cleans_up(server):
                 b"GET / HTTP/1.1\r\nHost: localhost\r\n"
                 b"Upgrade: websocket\r\nConnection: Upgrade\r\n"
                 b"Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: MDEyMzQ1Njc4OWFiY2RlZg==\r\n"
-                b"Sec-WebSocket-Protocol: inferport.v2\r\n\r\n"
+                b"Sec-WebSocket-Protocol: inferport\r\n\r\n"
             )
             headers(sock)
             recv_frame(sock)
@@ -265,7 +265,7 @@ def test_shutdown_bounds_library_initiated_close(server, monkeypatch):
             b"GET / HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\n"
             b"Connection: Upgrade\r\nSec-WebSocket-Version: 13\r\n"
             b"Sec-WebSocket-Key: MDEyMzQ1Njc4OWFiY2RlZg==\r\n"
-            b"Sec-WebSocket-Protocol: inferport.v2\r\n\r\n"
+            b"Sec-WebSocket-Protocol: inferport\r\n\r\n"
         )
         headers(sock)
         recv_frame(sock)

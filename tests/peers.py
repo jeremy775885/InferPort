@@ -65,7 +65,7 @@ def handshake(sock):
     )
     sock.sendall(
         b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
-        b"Sec-WebSocket-Protocol: inferport.v2\r\nSec-WebSocket-Accept: " + accept + b"\r\n\r\n"
+        b"Sec-WebSocket-Protocol: inferport\r\nSec-WebSocket-Accept: " + accept + b"\r\n\r\n"
     )
 
 

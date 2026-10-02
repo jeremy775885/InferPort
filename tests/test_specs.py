@@ -309,7 +309,8 @@ def test_application_declares_extensions_without_changing_robot_profile(server):
         )
 
 
-def test_v1_handshake_rejected(server):
+@pytest.mark.parametrize("subprotocol", ["inferport.v1", "inferport.v2"])
+def test_versioned_subprotocol_rejected(server, subprotocol):
     import asyncio
 
     from websockets.asyncio.client import connect
@@ -317,12 +318,30 @@ def test_v1_handshake_rejected(server):
 
     async def old_client(url):
         with pytest.raises(InvalidStatus) as error:
-            async with connect(url, subprotocols=["inferport.v1"]):
+            async with connect(url, subprotocols=[subprotocol]):
                 pass
         assert error.value.response.status_code == 400
 
     with server() as (url, *_):
         asyncio.run(old_client(url))
+
+
+def test_unversioned_subprotocol_contract_and_inference(server):
+    from websockets.sync.client import connect
+
+    from inferport import codec
+
+    with server() as (url, *_), connect(url, subprotocols=["inferport"], proxy=None) as ws:
+        assert ws.subprotocol == "inferport"
+        assert codec.decode(ws.recv()) == {"id": 0, "ok": True, "data": {}}
+        ws.send(codec.encode({"id": 1, "op": "describe", "data": {}}))
+        description = codec.decode(ws.recv())
+        assert description["id"] == 1 and description["ok"] is True
+        spec = InferenceSpec.from_dict(description["data"]["spec"])
+        payload = {"ok": 7}
+        spec.inputs.validate(payload)
+        ws.send(codec.encode({"id": 2, "op": "infer", "data": payload}))
+        assert codec.decode(ws.recv()) == {"id": 2, "ok": True, "data": payload}
 
 
 def test_generic_value_backend_contract():

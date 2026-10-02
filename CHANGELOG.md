@@ -16,8 +16,11 @@
   ordered state/action channels, units, absolute targets and declared action horizons.
   Application diagnostics and seed options are declared by adapters, outside the base profile.
   No environment base class, action scheduling or conversions are added.
-- **Wire change:** require `inferport.v2` on both endpoints. v1 is rejected explicitly;
-  READY/reset remain empty acknowledgments, and `describe` is a separate operation.
+- Use the single unversioned `inferport` WebSocket subprotocol. Both endpoints must
+  use this SDK, and existing backends must implement `describe()`; no legacy
+  compatibility layer is provided. READY/reset remain empty acknowledgments.
+- Package version 0.2.0 covers the contract API changes. The communication identifier
+  remains `inferport`; the package version does not introduce a protocol suffix.
 
 ## 0.1.0 — 2026-09-26
 

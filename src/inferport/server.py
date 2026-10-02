@@ -57,7 +57,7 @@ class _Service:
             for part in header.split(",")
         ]
         if protocol.SUBPROTOCOL not in offered:
-            response = ws.respond(HTTPStatus.BAD_REQUEST, "inferport.v2 is required\n")
+            response = ws.respond(HTTPStatus.BAD_REQUEST, "inferport subprotocol is required\n")
             response.headers["InferPort-Error"] = "protocol_error"
             return response
         return None

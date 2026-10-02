@@ -1,6 +1,6 @@
 # InferPort 协议与接口参考
 
-更新日期：2026-10-02。对应未发布 SDK 0.2.0、线协议 `inferport.v2`；实测范围见 [验证概览](validation.md)。
+更新日期：2026-10-02。对应未发布 SDK 0.2.0、线协议 `inferport`；实测范围见 [验证概览](validation.md)。
 
 本文定义已实现的公开 API、数据格式、连接生命周期和回归要求，后续修改须同步维护。
 快速使用见 [README](../README.md)，下一阶段工作见 [真实推理验证计划](integration-validation.md)。
@@ -345,11 +345,11 @@ MessagePack 的扩展类型避免数组标记与用户字典字段碰撞；格�
   网络大小限制在解码前生效；嵌套与总节点检查还需要结构遍历。
 - 不承诺总进程内存小于消息上限：编码、解码、可写数组和 Python 容器均有额外内存开销。
 
-## 7. WebSocket 与线协议 v2
+## 7. WebSocket 与线协议
 
 ### 7.1 连接与就绪
 
-端点为 `/`。必须协商 WebSocket subprotocol `inferport.v2`；缺失或不匹配时拒绝连接。
+端点为 `/`。必须协商 WebSocket subprotocol `inferport`；缺失或不匹配时拒绝连接。
 不通过包版本字符串猜测兼容性，不静默回退为 JSON 或其他协议。
 
 握手完成后，服务端尝试取得唯一活动连接的所有权。获得所有权后执行 `backend.reset({})`，
@@ -390,7 +390,7 @@ MessagePack 的扩展类型避免数组标记与用户字典字段碰撞；格�
 - 操作为 `infer`、`reset` 和 `describe`。reset 成功响应 data 必须为空字典，infer 响应为 Backend 结果字典。
 - 请求键严格为 id/op/data；成功响应为 id/ok/data；错误响应为 id/ok/error。
   不允许重复键、未知信封字段、错误字段类型或 ok 同时携带 data 和 error。
-- error 的键严格为 code/message/fatal，类型分别为 str/str/bool；v2 只接受下表列出的线协议错误码。
+- error 的键严格为 code/message/fatal，类型分别为 str/str/bool；只接受下表列出的线协议错误码。
   非 fatal 错误仅允许 invalid_input。握手阶段的 unauthorized 是本地映射，不属于业务错误信封。
 - Client 必须验证 ID 对应关系和响应结构；不匹配即废弃连接，禁止把旧结果交给下一次调用。
 - SDK 每次等待当前调用完成后再发下一个请求；不提供 pipeline 或响应重排功能。
@@ -546,7 +546,7 @@ src/inferport/
   backend.py               # Backend 与 Payload 类型
   client.py                # 同步 Client 门面与连接生命周期
   server.py                # serve 与单后端执行/清理
-  protocol.py              # v2 消息结构、校验和错误映射
+  protocol.py              # 消息结构、校验和错误映射
   codec.py                 # MessagePack / ndarray 格式与限制
   errors.py                # 公共异常
   _io.py                   # 私有 I/O 循环、deadline 和关闭助手
@@ -634,7 +634,7 @@ benchmarks/
 [首版研究归档](archive/design-notes.md)。已执行的结果和剩余缺口见 [验证概览](validation.md)。
 
 
-## Input-output contracts (v2)
+## Input-output contracts
 
 每个 Backend 必须实现 `describe()` 并返回
 `InferenceSpec(inputs, outputs, context, profile)`；三个数据结构均为 ObjectSpec。
@@ -692,6 +692,7 @@ dataclasses.replace 和 ObjectSpec 扩展 outputs/context，并在两端声明�
 
 ### Migration
 
-0.2.0 只协商 inferport.v2，双方需同时更新。v1 不支持 describe，READY/reset 数据为空的规则
-不能被扩展元数据破坏。v2 使用独立 describe RPC，不用特殊 infer 输入模拟控制操作。
-旧 Backend 必须补齐 describe 和实际数据契约，两端按新接口同步更新；不提供兼容层。
+PyPI 版本使用 0.2.0，通信标识固定为 inferport，不带版本后缀，也不维护多版本分支。
+两端均需更新；旧的带版本标识连接不会被接受。旧 Backend 必须补齐 describe 和实际数据契约。
+0.2.0 包含上述接口变化，不承诺旧后端源码兼容。describe 使用独立 RPC，
+READY/reset 仍返回空字典，不用特殊 infer 输入模拟控制操作；不提供兼容层。

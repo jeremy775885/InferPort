@@ -76,7 +76,7 @@ actions there. Declare image layout, joint order, units and chunk shapes through
 `InferenceSpec`; both adapters implement that contract. InferPort validates data but
 does not resize images, normalize model features or control hardware.
 
-## Input and output contracts (0.2.0)
+## Input and output contracts
 
 Every backend implements `Backend.describe() -> InferenceSpec`. The
 server snapshots it once per connection, after the initial `reset({})`, on the same
@@ -126,11 +126,13 @@ use m, and grippers use fraction (0 closed, 1 open). Nonempty reset context supp
 extend the returned dataclass with `dataclasses.replace` and additional `ObjectSpec`
 fields on each endpoint as needed. No extension registry is required.
 Each endpoint supplies its own camera sizes, channel names and output horizon; no model
-or robot shape is built into InferPort. See the [contract reference](docs/inferport-design.md#input-output-contracts-v2).
+or robot shape is built into InferPort. See the [contract reference](docs/inferport-design.md#input-output-contracts).
 
-This release uses `inferport.v2`; both endpoints must upgrade together. v1 peers are
-rejected during the handshake. The new `describe` operation is separate from the
-unchanged empty READY/reset acknowledgments; there is no silent protocol fallback.
+This release uses the single WebSocket subprotocol `inferport`, without a version
+suffix. Both endpoints must use the current SDK; earlier versioned subprotocols are
+not accepted. Backends must implement `describe()` and declare their data contract.
+The 0.2.0 release includes the required contract API; old backends need updating.
+READY/reset acknowledgments remain empty.
 
 ## State and errors
 
@@ -210,7 +212,7 @@ by default. Use a client context for a private CA. Tokens must be nonempty print
 ASCII without whitespace; keep them out of URLs. Use TLS or a trusted encrypted tunnel
 across untrusted networks; a token does not encrypt `ws://` traffic.
 
-The only endpoint is `/`, with required subprotocol `inferport.v2`. Browser Origin
+The only endpoint is `/`, with required subprotocol `inferport`. Browser Origin
 requests are rejected. Compression and system proxy discovery are disabled. Heartbeats
 check connection liveness, not model progress. Standard Python logging provides request
 IDs, operations, durations, and errors without automatically logging payloads.

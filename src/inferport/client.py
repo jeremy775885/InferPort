@@ -98,7 +98,7 @@ class Client:
                 **kwargs,
             )
             if self._ws.subprotocol != protocol.SUBPROTOCOL:
-                raise ProtocolError("Server didn't negotiate inferport.v2")
+                raise ProtocolError("Server didn't negotiate the inferport subprotocol")
             stage = "ready"
             raw = await self._ws.recv()
             protocol.response(codec.decode(raw, self._limit), 0, empty=True)
@@ -120,7 +120,7 @@ class Client:
             if exc.response.status_code == 401:
                 raise RemoteError("unauthorized", "Authentication failed", None, True) from exc
             if exc.response.headers.get_all("InferPort-Error") == ["protocol_error"]:
-                raise ProtocolError("Server rejected the protocol version") from exc
+                raise ProtocolError("Server rejected the InferPort subprotocol") from exc
             raise TransportError("WebSocket handshake rejected") from exc
         except NegotiationError as exc:
             raise ProtocolError("WebSocket subprotocol negotiation failed") from exc
