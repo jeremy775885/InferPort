@@ -1,8 +1,31 @@
 # InferPort 验证概览
 
-更新日期：2026-10-02。历史发布基线：`v0.1.0` / `3cc9077779fa072f0a77a32c86cc842b19d5b6b8`。
+更新日期：2026-10-03。当前发布版本：`v0.2.0` / `45825cc92f41a7307b874e4768cd477794f50b98`。
+历史发布基线：`v0.1.0` / `3cc9077779fa072f0a77a32c86cc842b19d5b6b8`。
 本文汇总已取得的证据及适用范围；逐轮环境、命令和实验细节保存在
 [0.1.0 验证归档](archive/v0.1.0-validation.md)。后续源码改动应以对应提交的检查结果为准。
+
+## 0.2.0 正式发布验证 — 2026-10-03
+
+- [GitHub Release v0.2.0](https://github.com/jeremy775885/InferPort/releases/tag/v0.2.0)
+  对应提交 `45825cc92f41a7307b874e4768cd477794f50b98`。
+- [提交 CI](https://github.com/jeremy775885/InferPort/actions/runs/37030369846) 的 11 个检查全部通过；
+  [发布工作流](https://github.com/jeremy775885/InferPort/actions/runs/37031646177) 最终为 Success，
+  完成验证、构建和 PyPI 上传。
+- [PyPI 0.2.0](https://pypi.org/project/inferport/0.2.0/) 已提供 wheel 和 sdist，
+  上传时间为 2026-10-02 16:08 UTC（北京时间 2026-10-03 00:08）。
+- 仓库外独立 Python 3.12.3 环境从正式 PyPI 安装 `inferport==0.2.0`，依赖检查通过；
+  导入来自该环境的 site-packages，版本为 `0.2.0`，WebSocket subprotocol 为 `inferport`。
+  使用该正式包启动临时服务，真实连接、契约获取及推理调用通过，数值结果符合预期。
+  该环境复用此前已验证的 NumPy、msgpack、websockets 依赖；InferPort 从 PyPI 获取。
+- 本次未替换 LeRobot/RoboTwin 环境的已安装包，未操作现有模型服务，也未重跑 GPU 成功率。
+
+发布文件 SHA256：
+
+| 文件 | SHA256 |
+|---|---|
+| `inferport-0.2.0-py3-none-any.whl` | `200500a49bf48b079ae0f256567c6cb2b818d3217eaf8fcf5a15c7b593f8c3d6` |
+| `inferport-0.2.0.tar.gz` | `3384c44528739b0e019b027e5be8c7e1283064f5f3701391f8fe66904ce8a26e` |
 
 ## 0.2.0 发布前检查 — 2026-10-02
 
@@ -10,7 +33,7 @@
 wheel/sdist 构建和 `twine check --strict` 全部通过。版本为 0.2.0，通信标识为 `inferport`。
 本机的默认镜像覆盖曾使锁文件检查要求改写源地址；隔离该覆盖后，原锁文件在 CI 默认配置及
 原索引下均通过检查。没有保留依赖升级、镜像迁移或锁文件改写。
-GitHub 完整 CI 和正式上传由发布工作流执行；实际发布结果在验证完成后补充。
+GitHub 完整 CI 和正式上传结果见上方正式发布验证记录。
 
 ## 0.2.0 / inferport 候选版本检查 — 2026-10-02
 
