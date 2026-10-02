@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0 — Unreleased
+## 0.2.0 — 2026-10-02
 
 - Accept codec-supported NumPy scalar backend outputs in typed contracts, preserving
   boolean/numeric separation, finite/range checks and the original backend payload.

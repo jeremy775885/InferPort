@@ -1,6 +1,6 @@
 # InferPort 协议与接口参考
 
-更新日期：2026-10-02。对应未发布 SDK 0.2.0、线协议 `inferport`；实测范围见 [验证概览](validation.md)。
+更新日期：2026-10-02。对应 SDK 0.2.0、线协议 `inferport`；实测范围见 [验证概览](validation.md)。
 
 本文定义已实现的公开 API、数据格式、连接生命周期和回归要求，后续修改须同步维护。
 快速使用见 [README](../README.md)，下一阶段工作见 [真实推理验证计划](integration-validation.md)。

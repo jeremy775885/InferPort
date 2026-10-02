@@ -240,8 +240,8 @@ separate validation.
 
 ## Documentation
 
-Version 0.2.0 is an unpublished candidate in this checkout. Build/install locally until
-it is released; 0.1.0 remains the published historical baseline.
+Version 0.2.0 uses the unversioned `inferport` subprotocol and requires declared
+backend contracts. Upgrade both endpoints together; see the changelog for API changes.
 
 | Document | Purpose |
 |---|---|
