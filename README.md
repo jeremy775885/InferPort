@@ -5,7 +5,8 @@ repository and a robot, simulator, or evaluation program. Supports policy, value
 reward, and other backends without importing a model framework or robot SDK.
 
 The public API is `Backend`, `serve`, and `Client`. The execution loop belongs to the
-calling application. Transport is WebSocket with binary MessagePack and NumPy arrays.
+calling application. Optional trained-prefix scheduling is available in
+[`inferport.rtc`](docs/rtc.md), without LeRobot, Torch or robot SDK dependencies. Transport is WebSocket with binary MessagePack and NumPy arrays.
 One connection owns one backend; batch is simply part of your array shapes.
 
 ## Install and run
@@ -232,9 +233,10 @@ and newer combinations.
 It includes Windows/macOS smoke jobs; completed runs and their scope are recorded in
 [the validation record](https://github.com/jeremy775885/InferPort/blob/main/docs/validation.md#github-actions).
 
-This repository doesn't implement RTC, robot/environment base classes, action scheduling,
-automatic batching or multiple sessions/models. Contracts describe and validate data;
-model and robot conversions remain in the consuming repositories.
+The optional RTC client schedules a single trained-prefix action stream. Model-side
+RTC sampling, robot/environment base classes, automatic batching and multiple
+sessions/models are outside its scope. Contracts describe and validate data; model
+and robot conversions remain in the consuming repositories.
 Real model and robot integrations remain in their owning repositories and require
 separate validation.
 

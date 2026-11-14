@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.0 — unreleased
+
+- Add optional `inferport.rtc.RTCClient` for client-owned trained-prefix scheduling,
+  with bounded queues, explicit action timing, stale-result rejection and reset isolation.
+- Keep the existing protocol and three runtime dependencies unchanged. RTC clients
+  send ordinary `action_prefix` inputs to a compatible backend; no server action cache.
+
 ## 0.2.0 — 2026-10-02
 
 - Accept codec-supported NumPy scalar backend outputs in typed contracts, preserving
