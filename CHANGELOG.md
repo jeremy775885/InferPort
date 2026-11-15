@@ -2,6 +2,9 @@
 
 ## 0.3.0 — unreleased
 
+- Add request/deadline context to RTC fault events and readiness margins to result
+  events. Extend CPU tests for delayed responses, deadline ordering and recovery;
+  add a synthetic image-input/action-output mode to the loopback benchmark.
 - Add optional `inferport.rtc.RTCClient` for client-owned trained-prefix scheduling,
   with bounded queues, explicit action timing, stale-result rejection and reset isolation.
 - Keep the existing protocol and three runtime dependencies unchanged. RTC clients

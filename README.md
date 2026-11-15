@@ -226,6 +226,7 @@ uv run ruff check .
 uv run ruff format --check .
 uv build
 uv run benchmarks/roundtrip.py --iterations 100
+uv run benchmarks/roundtrip.py --mode policy --iterations 1000 --warmup 20 --budget-ms 100 --output /tmp/inferport-policy-load.json
 ```
 
 CI covers Python 3.10–3.14, minimum dependencies (NumPy 1.21.3), NumPy 1.23.5 / 1.26.4,
@@ -239,6 +240,10 @@ sessions/models are outside its scope. Contracts describe and validate data; mod
 and robot conversions remain in the consuming repositories.
 Real model and robot integrations remain in their owning repositories and require
 separate validation.
+
+RTC fault tests and the synthetic image-input/action-output benchmark run on CPU
+without a model or simulator. See [RTC validation](docs/rtc.md#validation-without-a-model-or-simulator)
+for coverage, timing metrics and the limits of the model-free measurements.
 
 ## Documentation
 

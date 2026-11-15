@@ -8,8 +8,20 @@ from queue import Queue
 
 import numpy as np
 import pytest
-from inferport import Backend, Client, Dimension, InferenceSpec, ObjectSpec, TensorSpec
+
+from inferport import (
+    Backend,
+    Client,
+    Dimension,
+    Error,
+    InferenceSpec,
+    ObjectSpec,
+    TensorSpec,
+    codec,
+    protocol,
+)
 from inferport.rtc import RTCClient, RTCError
+from tests.peers import frame, peer, recv_frame
 
 
 def contract(horizon=12, maximum=4):
@@ -94,13 +106,14 @@ def bootstrap(rtc):
     wait_result(rtc)
 
 
-def to_request(rtc, clock):
+def to_request(rtc, clock, *, constant=None):
     bootstrap(rtc)
     for index in range(6):
         clock.now = 100 + index
         target = rtc.next_action()
         assert target.step == index
-        np.testing.assert_array_equal(target.values, [index, index])
+        expected = index if constant is None else constant
+        np.testing.assert_array_equal(target.values, [expected, expected])
     clock.now = 106
     assert rtc.needs_observation
 
@@ -111,6 +124,191 @@ def test_configuration_rejected_before_rpc(prefix, period):
     with pytest.raises(ValueError):
         RTCClient(client, prefix_steps=prefix, period_steps=period, action_interval=1)
     assert client.resets == 0 and client.calls == []
+
+
+@pytest.mark.parametrize("completed_at", [108.999, 109.0, 109.001])
+def test_result_completion_around_deadline(runtime, completed_at):
+    rtc, client, clock = runtime
+    to_request(rtc, clock)
+    client.release.clear()
+    rtc.submit({"state": np.zeros(2, np.float32)})
+    # Wait for worker publication without polling or adopting the result yet.
+    future = rtc._pending.future
+    committed = []
+    for step in (6, 7, 8):
+        clock.now = 100 + step
+        committed.append(rtc.next_action())
+    clock.now = completed_at
+    client.release.set()
+    future.result(timeout=2)
+    clock.now = max(109.0, completed_at)
+    if completed_at > 109:
+        with pytest.raises(RTCError, match="result missed"):
+            rtc.next_action()
+        assert rtc.step == 9
+        fault = rtc.drain_events()[-1]
+        assert fault["event"] == "fault"
+        assert fault["request_id"] == 1 and fault["anchor"] == 6
+        assert fault["captured_at"] == 106 and fault["deadline"] == 109
+        assert fault["completed_at"] == fault["detected_at"] == completed_at
+        assert fault["scheduled_at"] == 109
+    else:
+        for step in (9, 10, 11):
+            clock.now = 100 + step
+            committed.append(rtc.next_action())
+        assert [a.step for a in committed] == list(range(6, 12))
+        assert [a.values[0] for a in committed] == [6, 7, 8, 103, 104, 105]
+        assert [a.chunk_offset for a in committed[3:]] == [3, 4, 5]
+        assert all(a.request_id == 1 and a.epoch == 1 for a in committed[3:])
+        events = rtc.drain_events()
+        result = next(e for e in events if e["event"] == "result")
+        assert result["anchor"] == 6 and result["deadline"] == 109
+        assert result["deadline_margin_s"] == pytest.approx(109 - completed_at)
+        assert sum(e["event"] == "switch" for e in events) == 1
+
+
+@pytest.mark.parametrize("failure", ["partial_response", "wrong_id", "disconnect"])
+def test_real_wire_failure_never_commits_unconditioned_action(failure):
+    stalled, resume = threading.Event(), threading.Event()
+
+    def handler(sock, release):
+        count = 0
+        while True:
+            try:
+                opcode, raw = recv_frame(sock)
+            except EOFError:
+                return
+            if opcode == 8:
+                sock.sendall(frame(raw, opcode=8))
+                return
+            message = codec.decode(raw)
+            request_id = message["id"]
+            if message["op"] == "reset":
+                output = {}
+            else:
+                count += 1
+                actions = np.full((12, 2), count, dtype=np.float32)
+                prefix = message["data"].get("action_prefix")
+                if prefix is not None:
+                    actions[: len(prefix)] = prefix
+                output = {"action": actions}
+                if count == 2 and failure == "disconnect":
+                    return
+                if count == 2 and failure == "wrong_id":
+                    request_id += 1
+            packet = frame(codec.encode(protocol.success(request_id, output)))
+            if count == 2 and message["op"] == "infer" and failure == "partial_response":
+                midpoint = len(packet) // 2
+                sock.sendall(packet[:midpoint])
+                stalled.set()
+                assert resume.wait(5), "test didn't release partial response"
+                sock.sendall(packet[midpoint:])
+            else:
+                sock.sendall(packet)
+
+    clock = Clock()
+    with peer(handler, spec=contract()) as uri:
+        with RTCClient(
+            Client(uri).connect(), prefix_steps=3, period_steps=6, action_interval=1, clock=clock
+        ) as rtc:
+            try:
+                rtc.reset()
+                to_request(rtc, clock, constant=1)
+                rtc.submit({"state": np.zeros(2, np.float32)})
+                future = rtc._pending.future
+                if failure == "partial_response":
+                    assert stalled.wait(2)
+                    committed = []
+                    for step in (6, 7, 8):
+                        clock.now = 100 + step
+                        committed.append(rtc.next_action().step)
+                    clock.now = 109
+                    with pytest.raises(RTCError, match="prefix boundary"):
+                        rtc.next_action()
+                    assert committed == [6, 7, 8] and rtc.step == 9
+                else:
+                    with pytest.raises(Error):
+                        future.result(timeout=2)
+                    with pytest.raises(RTCError, match="RTC inference failed"):
+                        rtc.next_action()
+                    assert rtc.step == 6
+                fault = rtc.drain_events()[-1]
+                assert fault["event"] == "fault" and fault["request_id"] == 1
+                assert fault["anchor"] == 6 and fault["deadline"] == 109
+                assert "completed_at" not in fault
+                if failure == "partial_response":
+                    # A completion at the deadline cannot undo an earlier boundary fault.
+                    resume.set()
+                    future.result(timeout=2)
+                    with pytest.raises(RTCError):
+                        rtc.next_action()
+                    assert rtc.step == 9 and rtc.drain_events() == []
+                    rtc.reset()
+                    bootstrap(rtc)
+                    action = rtc.next_action()
+                    assert action.step == 0 and action.epoch == 2
+                    np.testing.assert_array_equal(action.values, [3, 3])
+            finally:
+                resume.set()
+
+
+def test_ready_result_does_not_hide_control_thread_overrun(runtime):
+    rtc, _, clock = runtime
+    to_request(rtc, clock)
+    rtc.submit({"state": np.zeros(2, np.float32)})
+    wait_result(rtc)
+    # Inference was on time, but the control thread missed a whole action interval.
+    clock.now = 108
+    with pytest.raises(RTCError, match="Control loop"):
+        rtc.next_action()
+    assert rtc.step == 6
+    fault = rtc.drain_events()[-1]
+    assert fault["request_id"] == 1 and fault["anchor"] == 6
+    assert fault["completed_at"] == fault["scheduled_at"] == 106
+    assert fault["detected_at"] == 108 and fault["deadline"] == 109
+
+
+def test_client_preparation_after_real_rpc_is_inside_deadline(server):
+    entered, resume = threading.Event(), threading.Event()
+    calls = 0
+
+    def prepare(actions):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            entered.set()
+            assert resume.wait(5)
+        return actions
+
+    clock = Clock()
+    with server(PrefixBackend()) as (uri, *_):
+        with RTCClient(
+            Client(uri).connect(),
+            prefix_steps=3,
+            period_steps=6,
+            action_interval=1,
+            clock=clock,
+            prepare_actions=prepare,
+        ) as rtc:
+            try:
+                rtc.reset()
+                to_request(rtc, clock, constant=1)
+                rtc.submit({"state": np.zeros(2, np.float32)})
+                future = rtc._pending.future
+                assert entered.wait(2), "response didn't reach client preparation"
+                for step in (6, 7, 8):
+                    clock.now = 100 + step
+                    assert rtc.next_action().step == step
+                clock.now = 109.001
+                resume.set()
+                future.result(timeout=2)
+                with pytest.raises(RTCError, match="result missed"):
+                    rtc.next_action()
+                assert rtc.step == 9
+                fault = rtc.drain_events()[-1]
+                assert fault["completed_at"] == 109.001 and fault["deadline"] == 109
+            finally:
+                resume.set()
 
 
 def test_untrained_or_different_units_rejected():

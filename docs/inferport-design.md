@@ -2,6 +2,9 @@
 
 更新日期：2026-10-02。对应 SDK 0.2.0、线协议 `inferport`；实测范围见 [验证概览](validation.md)。
 
+0.3.0 候选新增可选客户端 [RTC 调度层](rtc.md)，沿用本文的通信协议与 Backend 接口。
+下文“首版范围”描述历史核心边界；RTC 时序、动作队列和故障语义以独立 RTC 文档为准。
+
 本文定义已实现的公开 API、数据格式、连接生命周期和回归要求，后续修改须同步维护。
 快速使用见 [README](../README.md)，下一阶段工作见 [真实推理验证计划](integration-validation.md)。
 选型对照及首版实施阶段保存在 [设计研究归档](archive/design-notes.md)。

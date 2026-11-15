@@ -150,11 +150,38 @@ class RTCClient:
         if self._fault is not None:
             raise self._fault
 
-    def _fail(self, message: str) -> None:
+    def _fail(
+        self,
+        message: str,
+        *,
+        request: _Request | None = None,
+        completed_at: float | None = None,
+    ) -> None:
         self._fault = RTCError(message)
-        self._events.append(
-            {"event": "fault", "epoch": self._epoch, "step": self._cursor, "detail": message}
-        )
+        event = {
+            "event": "fault",
+            "epoch": self._epoch,
+            "step": self._cursor,
+            "detail": message,
+            "detected_at": self._clock(),
+        }
+        if self._next_tick is not None:
+            event["scheduled_at"] = self._next_tick
+        if request is None:
+            request = self._pending
+            if request is None and self._ready is not None:
+                request, result = self._ready
+                completed_at = result.completed_at
+        if request is not None:
+            event.update(
+                request_id=request.identity,
+                anchor=request.anchor,
+                captured_at=request.captured_at,
+                deadline=request.deadline,
+            )
+        if completed_at is not None:
+            event["completed_at"] = completed_at
+        self._events.append(event)
         raise self._fault
 
     @property
@@ -298,25 +325,39 @@ class RTCClient:
                 result = request.future.result()
             except Exception as exc:
                 try:
-                    self._fail(f"RTC inference failed: {type(exc).__name__}: {exc}")
+                    self._fail(
+                        f"RTC inference failed: {type(exc).__name__}: {exc}", request=request
+                    )
                 except RTCError as error:
                     raise error from exc
             if request.epoch != self._epoch:
                 return
             if result.completed_at > request.deadline:
-                self._fail("RTC result missed its prefix deadline")
+                self._fail(
+                    "RTC result missed its prefix deadline",
+                    request=request,
+                    completed_at=result.completed_at,
+                )
             if request.prefix is not None and not np.array_equal(
                 result.actions[: self.prefix_steps], request.prefix
             ):
-                self._fail("Service changed the committed action_prefix")
+                self._fail(
+                    "Service changed the committed action_prefix",
+                    request=request,
+                    completed_at=result.completed_at,
+                )
             self._events.append(
                 {
                     "event": "result",
                     "epoch": request.epoch,
                     "request_id": request.identity,
                     "step": self._cursor,
+                    "anchor": request.anchor,
+                    "captured_at": request.captured_at,
+                    "deadline": request.deadline,
                     "completed_at": result.completed_at,
                     "latency_s": result.completed_at - request.captured_at,
+                    "deadline_margin_s": request.deadline - result.completed_at,
                     "adjusted_values": result.adjusted_values,
                 }
             )

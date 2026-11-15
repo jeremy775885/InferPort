@@ -1,9 +1,55 @@
 # InferPort 验证概览
 
-更新日期：2026-10-03。当前发布版本：`v0.2.0` / `45825cc92f41a7307b874e4768cd477794f50b98`。
+更新日期：2026-11-16。当前源码为 0.3.0 未发布候选。
+既有发布验证基线：`v0.2.0` / `45825cc92f41a7307b874e4768cd477794f50b98`。
 历史发布基线：`v0.1.0` / `3cc9077779fa072f0a77a32c86cc842b19d5b6b8`。
 本文汇总已取得的证据及适用范围；逐轮环境、命令和实验细节保存在
 [0.1.0 验证归档](archive/v0.1.0-validation.md)。后续源码改动应以对应提交的检查结果为准。
+
+## 0.3.0 RTC 无模型验证 — 2026-11-16
+
+范围：基于 `716f252` 的 RTC 诊断与无模型验证改动，验证记录与改动一并提交，0.3.0 尚未发布。
+仅使用 CPU、假动作生成器、
+可控时钟和 localhost；未运行真实模型、GPU、相机、仿真或机器人。
+
+- `.venv/bin/python -m pytest -q`：**236 passed（10.63 s）**，其中 RTC 为 32 项。
+- 新增覆盖：结果完成在截止前/截止时/截止后；真实 WebSocket 响应只交付一部分；
+  响应 ID 错配与断连；客户端动作准备超时；结果按时但控制线程错过动作周期；
+  故障锁定、迟到结果不恢复执行，以及 reset 后的新 epoch。
+- 新增 fault 请求/截止上下文和 result 截止余量；诊断字段说明见 [RTC 文档](rtc.md#failure-and-diagnostics)。
+- `.venv/bin/ruff check .`、`.venv/bin/ruff format --check .` 和 `uv build --offline` 通过。
+  构建 wheel/sdist；未重跑跨 Python/NumPy 矩阵或远程 CI。
+- 首次完整回归为 235 passed / 1 failed：已有虚拟环境的发行元数据为 0.1.0，
+  而导入源码为 0.3.0。执行 `uv pip install --python .venv/bin/python --no-deps --offline -e .`
+  刷新当前项目的 editable 安装后，上述完整回归通过；未调整依赖版本或放宽测试断言。
+
+本机图像载荷记录：[rtc-load-baseline.json](rtc-load-baseline.json)。命令：
+
+```bash
+.venv/bin/python benchmarks/roundtrip.py --mode policy \
+  --cameras 3 --height 480 --width 640 --horizon 50 --action-width 14 --prefix-steps 5 \
+  --iterations 1000 --warmup 20 --budget-ms 100 --output docs/rtc-load-baseline.json
+```
+
+环境：Linux x86_64、Python 3.12.3、NumPy 2.4.4、msgpack 1.2.2、websockets 17.1。
+三路 640×480 RGB uint8 合成图像加状态/prefix 输入，50×14 float32 动作输出；
+代表性请求约 2.77 MB，响应 2,837 字节。独立服务进程，无 TLS/压缩。
+
+| 阶段 | P50 | P95 | P99 |
+|---|---:|---:|---:|
+| 客户端快照复制 | 0.121 ms | 0.150 ms | 0.166 ms |
+| RPC（含编码、校验、传输与解码） | 5.320 ms | 6.287 ms | 7.450 ms |
+| 快照复制 + RPC | 5.439 ms | 6.419 ms | 7.577 ms |
+
+1000 次中快照复制 + RPC 最大 14.152 ms；示例 100 ms 预算超出次数 0，最小余量 85.848 ms。
+各阶段分位数独立计算，不能直接相加；JSON 保留配对原始样本、命令、时间和环境。
+这不是 RTC 控制循环，也不含采集、模型推理、动作准备或设备执行。100 ms 只是对比预算，
+不是部署推荐值；有限样本的 P99/最大值不能保证未来不超时。资源峰值包含先行 codec/JSON 比较。
+该数据只适用于本机，不能推断端侧硬件表现或共享内存收益。
+
+原 echo 模式另以每载荷 10 次完成运行检查，结果写入临时文件；不作为尾延迟结论。
+`docs/benchmark-results.json` 的历史基线未改动。实际模型 batch 成本、设备控制节拍、
+控制器队列及超时保持/停止行为仍需在对应接入仓库和目标平台验证。
 
 ## 0.2.0 正式发布验证 — 2026-10-03
 

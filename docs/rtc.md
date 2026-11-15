@@ -103,6 +103,78 @@ in the diagnostic buffer. `step` is the next uncommitted index, and `failed` lat
 an inference/control fault. Two action chunks at most are retained (active and
 pending replacement), in addition to the single in-flight observation/prefix.
 
+Result events include `request_id`, `anchor`, `captured_at`, `deadline`,
+`completed_at`, `latency_s` and `deadline_margin_s = deadline - completed_at`.
+Completion means the RPC, decoding, validation and `prepare_actions` have finished
+on the client. All timestamps use the client's monotonic clock; a server completion
+timestamp is not interchangeable with them. A positive margin measures result
+readiness before the deadline, not the time hardware actually applied a target.
+
+Fault events include `detected_at` and, once motion has started, `scheduled_at`
+for the next target. When an in-flight or ready request is associated with the fault,
+they also include `request_id`, `anchor`, `captured_at` and `deadline`.
+`completed_at` is present only when a valid prepared result's completion is known.
+A request still in transit or one failing validation has no such timestamp.
+Faults before a request is created may have no request fields. Faults latch: a late
+result neither clears the fault nor appends a successful result event afterward.
+
+For a request anchored at step `n`, old commands may be committed at
+`n .. n+d-1`. At step `n+d`, the replacement must be available to the control
+thread; otherwise `next_action()` raises before returning that target. `step=n+d`
+means this is the next uncommitted target, not one already executed. A completed
+result at exactly the deadline may be accepted if published before the boundary
+check; an unfinished result at that check faults. Full chunks remain anchored at
+`n`, so the first new target is at chunk offset `d`, never offset zero.
+
+These checks run when the application calls the RTC control API. They are not an
+independent hardware watchdog. The executor must not prequeue commands beyond the
+commitment boundary and must implement its stop/hold behavior on failure. A blocked
+control thread needs a device-side timeout. Capture and `submit()` (which copies
+the observation) also run on the control thread; measure their cost with real
+cameras before changing how snapshots are acquired.
+
 Explicit client prefixes keep server lifecycle unchanged. Future same-observation
 batch candidates can send one longest prefix plus candidate lengths; this version
 does not implement candidate batching or cross-request server action references.
+
+## Validation without a model or simulator
+
+The RTC tests use known action sequences, a controllable clock and local WebSocket
+connections. They need only the development dependencies and CPU:
+
+```bash
+uv run pytest -q tests/test_rtc.py
+```
+
+They cover result completion before/at/after a deadline, partially delivered
+responses, wrong response IDs, disconnects, delayed client action preparation,
+fault latching and reset isolation. Event gates control ordering without relying
+on millisecond sleeps for deadline assertions. The recorded targets check command
+ordering; these tests do not validate robot motion, model quality or hard realtime.
+
+For image transport measurements, use the existing loopback benchmark's policy
+mode. This is a synthetic backend that returns a small action array; it does not
+run a learned policy or the RTC control loop:
+
+```bash
+uv run benchmarks/roundtrip.py --mode policy \
+  --cameras 3 --height 480 --width 640 \
+  --horizon 50 --action-width 14 --prefix-steps 5 \
+  --iterations 1000 --warmup 20 --budget-ms 100 \
+  --output /tmp/inferport-policy-load.json
+```
+
+This Linux benchmark reports request/response sizes, client/server CPU time,
+snapshot-copy and RPC P50/P95/P99, and paired raw timing samples in the JSON file.
+`--budget-ms` is an optional comparison budget for **snapshot + RPC** only;
+exceedances are not RTC deadline violations. The example 100 ms is not a recommended
+robot budget. Camera acquisition, model inference, action preparation and execution
+must be measured separately on the target platform. Peak RSS includes earlier
+codec/JSON comparisons and is not a per-request memory footprint. The default
+`--mode echo` retains the original image roundtrip workload; historical results
+are not overwritten unless their path is explicitly supplied.
+
+Use the model-free baseline to decide whether a same-machine image shared-memory
+prototype is worth measuring. It does not establish a zero-copy or reliability
+advantage. Batch candidate latency still requires the actual model and GPU, and
+executor timing and stop behavior still require the actual execution environment.
