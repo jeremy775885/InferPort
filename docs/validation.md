@@ -1,10 +1,37 @@
 # InferPort 验证概览
 
-更新日期：2026-11-16。当前源码为 0.3.0 未发布候选。
+更新日期：2026-11-16。当前正在准备 0.3.0 发布，正式上传与 PyPI 安装验证待完成。
 既有发布验证基线：`v0.2.0` / `45825cc92f41a7307b874e4768cd477794f50b98`。
 历史发布基线：`v0.1.0` / `3cc9077779fa072f0a77a32c86cc842b19d5b6b8`。
 本文汇总已取得的证据及适用范围；逐轮环境、命令和实验细节保存在
 [0.1.0 验证归档](archive/v0.1.0-validation.md)。后续源码改动应以对应提交的检查结果为准。
+
+## 0.3.0 发布前检查 — 2026-11-16
+
+- RTC 实现与诊断基线为 `a15afe0e020b7b49387bb9525e84ad622b9e32c8`。
+  [GitHub CI](https://github.com/jeremy775885/InferPort/actions/runs/43739030207) 第二次尝试的
+  11 个任务全部成功，覆盖 Python 3.10–3.14、最低依赖、NumPy 1.23/1.26、跨环境通信和
+  Windows/macOS smoke。该轮平台 smoke 沿用既有测试范围，不代表完整 RTC 硬件或跨平台验证。
+- 第一次尝试中，Python 3.10 latest 在 `uv sync` 安装依赖阶段退出；同一提交重跑后通过。
+  未取得完整错误日志，未将具体原因归结为镜像、下载或解析故障，也未为此修改 RTC 或 CI 配置。
+- 本地独立 Python 3.10.17 环境按 CI 流程安装并升级运行时依赖，完整测试 **236 passed（10.96 s）**。
+  运行时为 NumPy 2.2.6、msgpack 1.2.4、websockets 16.1.1；安装位置在 `/tmp`，未替换开发环境。
+- 发布准备将 CHANGELOG 日期设为 2026-11-16，更新 0.3.0 安装和兼容性说明。
+  `uv lock --check --offline`、`uv sync --locked --offline --python 3.12 --group dev` 通过，
+  `uv.lock` 未变化。版本仍为 0.3.0，RTC 之外的协议和运行时依赖范围不变。
+- 在独立临时目录执行 `uv build --no-sources --offline --out-dir <dist>`，
+  wheel/sdist 均通过 `uvx --offline twine check --strict`。wheel 确认包含 `inferport/rtc.py`，
+  版本 0.3.0、Python >=3.10、MIT 许可证及 NumPy/msgpack/websockets 三项运行时依赖。
+- 新建 Python 3.12.3 虚拟环境，安装该实际 wheel 和 pytest，依赖检查通过；
+  `python -I` 确认导入来自新环境的 site-packages，`RTCClient` 可用。
+  用该环境执行 `python -I -m pytest -q tests`：**236 passed（10.40 s）**。
+  运行时为 NumPy 2.5.3、msgpack 1.2.2、websockets 17.1，非 editable 安装。
+- Ruff check/format 与差异空白检查通过。本节随发布准备提交保存；正式工作流仍须在该提交上验证。
+
+用户选择在 GitHub 网页完成最后操作：先在 `main` 手动运行 **Publish to PyPI**，
+确认 verify/build 成功、publish 被跳过；再创建并发布 `v0.3.0` Release，目标选择本发布准备提交。
+手动验证、正式上传、PyPI 产物及上传后干净安装结果尚未取得，后续另行补记。
+本轮检查仍不包含真实模型、GPU、相机、仿真或机器人执行。
 
 ## 0.3.0 RTC 无模型验证 — 2026-11-16
 

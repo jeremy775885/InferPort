@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.3.0 — unreleased
+## 0.3.0 — 2026-11-16
 
 - Add request/deadline context to RTC fault events and readiness margins to result
   events. Extend CPU tests for delayed responses, deadline ordering and recovery;
@@ -9,6 +9,9 @@
   with bounded queues, explicit action timing, stale-result rejection and reset isolation.
 - Keep the existing protocol and three runtime dependencies unchanged. RTC clients
   send ordinary `action_prefix` inputs to a compatible backend; no server action cache.
+- RTC requires a backend with trained-prefix conditioning. Model quality, camera
+  capture, robot execution and hardware stop/hold behavior require deployment-specific
+  validation; the Python client does not provide hard realtime or control hardware.
 
 ## 0.2.0 — 2026-10-02
 

@@ -6,7 +6,7 @@ reward, and other backends without importing a model framework or robot SDK.
 
 The public API is `Backend`, `serve`, and `Client`. The execution loop belongs to the
 calling application. Optional trained-prefix scheduling is available in
-[`inferport.rtc`](docs/rtc.md), without LeRobot, Torch or robot SDK dependencies. Transport is WebSocket with binary MessagePack and NumPy arrays.
+[`inferport.rtc`](https://github.com/jeremy775885/InferPort/blob/main/docs/rtc.md), without LeRobot, Torch or robot SDK dependencies. Transport is WebSocket with binary MessagePack and NumPy arrays.
 One connection owns one backend; batch is simply part of your array shapes.
 
 ## Install and run
@@ -242,13 +242,16 @@ Real model and robot integrations remain in their owning repositories and requir
 separate validation.
 
 RTC fault tests and the synthetic image-input/action-output benchmark run on CPU
-without a model or simulator. See [RTC validation](docs/rtc.md#validation-without-a-model-or-simulator)
+without a model or simulator. See [RTC validation](https://github.com/jeremy775885/InferPort/blob/main/docs/rtc.md#validation-without-a-model-or-simulator)
 for coverage, timing metrics and the limits of the model-free measurements.
 
 ## Documentation
 
-Version 0.2.0 uses the unversioned `inferport` subprotocol and requires declared
-backend contracts. Upgrade both endpoints together; see the changelog for API changes.
+Version 0.3.0 adds the optional trained-prefix RTC client. It retains the unversioned
+`inferport` subprotocol and declared backend contracts introduced in 0.2.0. The
+synchronous API remains available; RTC requires a backend that declares and implements
+trained-prefix conditioning. See the changelog for API changes and the RTC guide for
+timing, diagnostics and executor responsibilities.
 
 | Document | Purpose |
 |---|---|

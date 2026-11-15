@@ -4,8 +4,13 @@
 LeRobot, Torch or a robot SDK. The model backend must already implement trained
 prefix conditioning; this client does not turn an ordinary model into an RTC model.
 
-Install InferPort 0.3.0 from its source/wheel until published. The communication
-protocol is unchanged: a compatible existing server receives ordinary observations
+RTC is available starting with InferPort 0.3.0:
+
+```bash
+python -m pip install --upgrade "inferport==0.3.0"
+```
+
+The communication protocol is unchanged: a compatible existing server receives ordinary observations
 with an optional `action_prefix` and returns `action`.
 
 ## Contract and timing
